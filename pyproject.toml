@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "churn-ml-decision"
+version = "0.1.0"
+description = "Churn prediction and business decision pipeline."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "pandas",
+  "scikit-learn",
+  "matplotlib",
+  "seaborn",
+  "joblib",
+  "scipy",
+  "pyyaml",
+]
+
+[project.optional-dependencies]
+ml = ["xgboost", "lightgbm", "shap"]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+churn-prepare = "churn_ml_decision.prepare:main"
+churn-train = "churn_ml_decision.train:main"
+churn-evaluate = "churn_ml_decision.evaluate:main"
+churn-predict = "churn_ml_decision.predict:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
