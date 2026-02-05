@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from pathlib import Path
 
@@ -141,6 +142,12 @@ def main() -> None:
 
     model = joblib.load(model_path)
 
+    actual_model_type = cfg["model"]["name"]
+    summary_path = models_dir / "train_summary.json"
+    if summary_path.exists():
+        train_summary = json.loads(summary_path.read_text())
+        actual_model_type = train_summary.get("model_type", actual_model_type)
+
     # Validation baseline
     y_val_proba = model.predict_proba(x_val)[:, 1]
     roc_auc_val = roc_auc_score(y_val, y_val_proba)
@@ -190,7 +197,7 @@ def main() -> None:
         logger.info("Test Net Value: %.2f", net_value)
 
     final_results = {
-        "model_type": cfg["model"]["name"],
+        "model_type": actual_model_type,
         "final_threshold": final_threshold,
         "test_set_size": int(len(y_test)),
         "roc_auc": roc_auc_test,
@@ -213,10 +220,10 @@ def main() -> None:
     logger.info("Wrote %s", models_dir / results_file)
 
     # MLflow tracking
-    with start_run(cfg, run_name=f"evaluate-{cfg['model']['name']}") as run:
+    with start_run(cfg, run_name=f"evaluate-{actual_model_type}") as run:
         if run is not None:
             set_tag("stage", "evaluate")
-            set_tag("model_type", cfg["model"]["name"])
+            set_tag("model_type", actual_model_type)
             log_params({
                 "final_threshold": final_threshold,
                 "selection_rule": reason,
@@ -242,7 +249,7 @@ def main() -> None:
         raw_path = resolve_path(root, cfg["paths"]["data_raw"])
         payload = {
             "stage": "evaluate",
-            "model": cfg["model"]["name"],
+            "model": actual_model_type,
             "metrics": final_results,
             "selection_rule": reason,
             "artifacts": {

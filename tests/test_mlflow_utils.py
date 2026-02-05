@@ -1,5 +1,9 @@
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("mlflow")
+
 from churn_ml_decision.mlflow_utils import _flatten_dict, is_available, start_run
 
 

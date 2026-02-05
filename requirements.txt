@@ -1,3 +1,4 @@
+# Core dependencies only. For MLflow/DVC, install with: pip install -e ".[ops]"
 numpy
 pandas
 scikit-learn
