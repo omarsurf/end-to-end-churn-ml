@@ -21,7 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ml = ["xgboost", "lightgbm", "shap"]
-dev = ["pytest", "ruff"]
+dev = ["pytest", "pytest-cov", "ruff"]
 
 [project.scripts]
 churn-prepare = "churn_ml_decision.prepare:main"

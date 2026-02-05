@@ -17,6 +17,31 @@ from .track import file_sha256, log_run
 logger = logging.getLogger(__name__)
 
 
+def build_model(candidate: dict):
+    """Build a model instance from a candidate config dict."""
+    model_type = candidate["type"]
+    params = candidate.get("params", {})
+    if model_type == "logistic_regression":
+        return LogisticRegression(**params)
+    if model_type == "xgboost":
+        try:
+            from xgboost import XGBClassifier
+        except ImportError as exc:
+            raise ImportError(
+                "xgboost is not installed. Install with pip install -e '.[ml]'"
+            ) from exc
+        return XGBClassifier(**params)
+    if model_type == "lightgbm":
+        try:
+            from lightgbm import LGBMClassifier
+        except ImportError as exc:
+            raise ImportError(
+                "lightgbm is not installed. Install with pip install -e '.[ml]'"
+            ) from exc
+        return LGBMClassifier(**params)
+    raise ValueError(f"Unsupported model type: {model_type}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train model on processed arrays.")
     parser.add_argument(
@@ -50,25 +75,6 @@ def main() -> None:
 
     model_cfg = cfg["model"]
     candidates = model_cfg.get("candidates") or []
-
-    def build_model(candidate: dict):
-        model_type = candidate["type"]
-        params = candidate.get("params", {})
-        if model_type == "logistic_regression":
-            return LogisticRegression(**params)
-        if model_type == "xgboost":
-            try:
-                from xgboost import XGBClassifier
-            except ImportError as exc:
-                raise ImportError("xgboost is not installed. Install with pip install -e '.[ml]'") from exc
-            return XGBClassifier(**params)
-        if model_type == "lightgbm":
-            try:
-                from lightgbm import LGBMClassifier
-            except ImportError as exc:
-                raise ImportError("lightgbm is not installed. Install with pip install -e '.[ml]'") from exc
-            return LGBMClassifier(**params)
-        raise ValueError(f"Unsupported model type: {model_type}")
 
     results = []
     for candidate in candidates:

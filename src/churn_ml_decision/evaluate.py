@@ -79,6 +79,20 @@ def select_threshold(df: pd.DataFrame, min_recall: float) -> tuple[pd.Series, st
     return df.loc[idx], reason
 
 
+def check_quality_gates(
+    roc_auc: float, recall: float, precision: float, quality: dict
+) -> list[str]:
+    """Return list of failed gate names. Empty list means all gates passed."""
+    failures = []
+    if roc_auc < quality["min_roc_auc"]:
+        failures.append("roc_auc")
+    if recall < quality["min_recall"]:
+        failures.append("recall")
+    if precision < quality["min_precision"]:
+        failures.append("precision")
+    return failures
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Select threshold on validation and evaluate on test.")
     parser.add_argument(
@@ -219,13 +233,7 @@ def main() -> None:
     # Quality gates
     quality = cfg.get("quality", {})
     if quality:
-        failures = []
-        if roc_auc_test < quality["min_roc_auc"]:
-            failures.append("roc_auc")
-        if recall < quality["min_recall"]:
-            failures.append("recall")
-        if precision < quality["min_precision"]:
-            failures.append("precision")
+        failures = check_quality_gates(roc_auc_test, recall, precision, quality)
         if failures:
             raise SystemExit(f"Quality gates failed: {', '.join(failures)}")
 

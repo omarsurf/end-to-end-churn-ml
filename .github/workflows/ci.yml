@@ -18,10 +18,10 @@ jobs:
           pip install -e ".[dev]"
       - name: Lint
         run: ruff check src tests
-      - name: Test
-        run: pytest
       - name: Pipeline
         run: |
           churn-prepare --config config/default.yaml
           churn-train --config config/default.yaml
           churn-evaluate --config config/default.yaml
+      - name: Test
+        run: pytest --cov=churn_ml_decision --cov-report=term-missing
