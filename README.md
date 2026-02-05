@@ -1,5 +1,7 @@
 # Churn ML Decision
 
+[![CI](https://github.com/omarsurf/end-to-end-churn-ml/actions/workflows/ci.yml/badge.svg)](https://github.com/omarsurf/end-to-end-churn-ml/actions/workflows/ci.yml)
+
 This project builds a churn prediction model and turns it into a business decision for retention targeting. The main workflow lives in notebooks, with artifacts saved to `data/processed` and `models`.
 
 **Project Structure**
@@ -78,4 +80,5 @@ This script will:
 - Business value metrics (EV/ROI) are computed during evaluation using `business` config values.
 - Each train/evaluate run logs a record to `models/experiments.jsonl` when tracking is enabled.
 - The current model is recorded in `models/registry.json` when registry is enabled.
+- Dataset source: IBM Telco Customer Churn (Kaggle).
 - Portfolio summary: `docs/PORTFOLIO_REPORT.md`
