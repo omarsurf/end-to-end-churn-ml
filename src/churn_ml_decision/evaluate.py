@@ -17,6 +17,7 @@ from sklearn.metrics import (
 
 from .config import load_config, project_root, resolve_path
 from .io import load_test_arrays, load_val_arrays
+from .mlflow_utils import log_artifact, log_metrics, log_params, set_tag, start_run
 from .registry import current_model_path
 from .track import file_sha256, log_run
 
@@ -211,7 +212,31 @@ def main() -> None:
     logger.info("Wrote %s", models_dir / threshold_file)
     logger.info("Wrote %s", models_dir / results_file)
 
-    # Experiment tracking
+    # MLflow tracking
+    with start_run(cfg, run_name=f"evaluate-{cfg['model']['name']}") as run:
+        if run is not None:
+            set_tag("stage", "evaluate")
+            set_tag("model_type", cfg["model"]["name"])
+            log_params({
+                "final_threshold": final_threshold,
+                "selection_rule": reason,
+                "min_recall": min_recall,
+            })
+            test_metrics = {
+                "test_roc_auc": roc_auc_test,
+                "test_precision": precision,
+                "test_recall": recall,
+                "test_f1": f1,
+            }
+            if net_value is not None:
+                test_metrics["test_net_value"] = net_value
+                test_metrics["test_net_per_flagged"] = net_per_flagged
+            log_metrics(test_metrics)
+            log_artifact(str(models_dir / threshold_file))
+            log_artifact(str(models_dir / results_file))
+            logger.info("Logged evaluation run to MLflow (run_id=%s)", run.info.run_id)
+
+    # JSONL experiment tracking
     tracking_cfg = cfg.get("tracking", {})
     if tracking_cfg.get("enabled", False):
         raw_path = resolve_path(root, cfg["paths"]["data_raw"])

@@ -21,6 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ml = ["xgboost", "lightgbm", "shap"]
+ops = ["dvc", "mlflow"]
 dev = ["pytest", "pytest-cov", "ruff"]
 
 [project.scripts]

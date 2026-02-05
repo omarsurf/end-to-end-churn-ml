@@ -137,3 +137,50 @@ def test_train_no_enabled_candidates_exits(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr("sys.argv", ["churn-train", "--config", str(cfg_path)])
     with pytest.raises(SystemExit, match="No enabled model candidates"):
         train_main()
+
+
+def test_train_logs_to_mlflow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    data_dir, models_dir = _make_synthetic_data(tmp_path)
+    mlruns_dir = tmp_path / "mlruns"
+    candidates = "\n".join([
+        "    - name: lr_test",
+        "      type: logistic_regression",
+        "      enabled: true",
+        "      params:",
+        "        C: 1.0",
+        "        solver: liblinear",
+    ])
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        "\n".join([
+            "paths:",
+            f"  data_raw: {tmp_path / 'data' / 'raw'}",
+            f"  data_processed: {data_dir}",
+            f"  models: {models_dir}",
+            "model:",
+            "  name: logistic_regression",
+            "  version: 1",
+            "  selection_metric: roc_auc",
+            "  candidates:",
+            candidates,
+            "artifacts:",
+            "  model_file: best_model.joblib",
+            "tracking:",
+            "  enabled: false",
+            "registry:",
+            "  enabled: false",
+            "mlflow:",
+            "  enabled: true",
+            f"  tracking_uri: {mlruns_dir}",
+            "  experiment_name: test-experiment",
+            "  register_model: false",
+        ])
+    )
+
+    monkeypatch.setattr("sys.argv", ["churn-train", "--config", str(cfg_path)])
+    train_main()
+
+    assert mlruns_dir.exists()
+    # Verify at least one experiment directory was created
+    experiment_dirs = [d for d in mlruns_dir.iterdir() if d.is_dir() and d.name != ".trash"]
+    assert len(experiment_dirs) >= 1

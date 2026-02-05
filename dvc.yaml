@@ -1,0 +1,56 @@
+stages:
+  prepare:
+    cmd: churn-prepare --config config/default.yaml
+    deps:
+      - data/raw/WA_Fn-UseC_-Telco-Customer-Churn.csv
+      - src/churn_ml_decision/prepare.py
+      - config/default.yaml
+    outs:
+      - data/processed/X_train_processed.npy
+      - data/processed/X_val_processed.npy
+      - data/processed/X_test_processed.npy
+      - data/processed/y_train.npy
+      - data/processed/y_val.npy
+      - data/processed/y_test.npy
+    params:
+      - config/default.yaml:
+          - split
+          - features
+          - engineering
+
+  train:
+    cmd: churn-train --config config/default.yaml
+    deps:
+      - data/processed/X_train_processed.npy
+      - data/processed/y_train.npy
+      - data/processed/X_val_processed.npy
+      - data/processed/y_val.npy
+      - src/churn_ml_decision/train.py
+      - config/default.yaml
+    outs:
+      - models/best_model.joblib
+      - models/train_summary.json
+    params:
+      - config/default.yaml:
+          - model
+
+  evaluate:
+    cmd: churn-evaluate --config config/default.yaml
+    deps:
+      - models/best_model.joblib
+      - data/processed/X_val_processed.npy
+      - data/processed/y_val.npy
+      - data/processed/X_test_processed.npy
+      - data/processed/y_test.npy
+      - src/churn_ml_decision/evaluate.py
+      - config/default.yaml
+    metrics:
+      - models/final_test_results.csv:
+          cache: true
+    plots:
+      - models/threshold_analysis_val.csv:
+          cache: true
+    params:
+      - config/default.yaml:
+          - evaluation
+          - quality

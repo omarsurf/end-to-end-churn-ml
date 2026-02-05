@@ -20,3 +20,5 @@ models/train_medians.joblib
 models/train_medians.json
 models/experiments.jsonl
 models/registry.json
+/mlruns/
+.coverage

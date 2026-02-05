@@ -118,6 +118,13 @@ registry:
   use_current: true
   template: "{name}_v{version}.joblib"
 
+mlflow:
+  enabled: true
+  tracking_uri: mlruns
+  experiment_name: churn-prediction
+  register_model: false
+  model_name: churn-classifier
+
 quality:
   min_roc_auc: 0.83
   min_recall: 0.70

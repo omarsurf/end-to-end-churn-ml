@@ -11,6 +11,7 @@ from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_sco
 
 from .config import load_config, project_root, resolve_path
 from .io import load_train_val_arrays
+from .mlflow_utils import log_artifact, log_metrics, log_model, log_params, set_tag, start_run
 from .registry import update_registry
 from .track import file_sha256, log_run
 
@@ -130,6 +131,12 @@ def main() -> None:
     joblib.dump(best["model"], models_dir / model_file)
     logger.info("Saved model: %s", models_dir / model_file)
 
+    # Always save canonical name for DVC pipeline compatibility
+    canonical = cfg["artifacts"]["model_file"]
+    if model_file != canonical:
+        joblib.dump(best["model"], models_dir / canonical)
+        logger.info("Saved canonical model: %s", models_dir / canonical)
+
     summary = {
         "model_type": best["name"],
         "selection_metric": selection_metric,
@@ -143,7 +150,24 @@ def main() -> None:
     summary_path.write_text(json.dumps(summary, indent=2))
     logger.info("Wrote %s", summary_path)
 
-    # Experiment tracking
+    # MLflow tracking
+    with start_run(cfg, run_name=f"train-{best['name']}") as run:
+        if run is not None:
+            set_tag("stage", "train")
+            set_tag("model_type", best["name"])
+            log_params(best["params"])
+            log_params({"selection_metric": selection_metric})
+            log_metrics({
+                "val_roc_auc": best["roc_auc"],
+                "val_precision": best["precision"],
+                "val_recall": best["recall"],
+                "val_f1": best["f1"],
+            })
+            log_artifact(str(summary_path))
+            log_model(best["model"], artifact_path="model", cfg=cfg)
+            logger.info("Logged training run to MLflow (run_id=%s)", run.info.run_id)
+
+    # JSONL experiment tracking
     tracking_cfg = cfg.get("tracking", {})
     if tracking_cfg.get("enabled", False):
         raw_path = resolve_path(root, cfg["paths"]["data_raw"])
