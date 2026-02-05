@@ -45,6 +45,21 @@ def test_threshold_analysis_multiple_thresholds():
     assert df.iloc[0]["Recall"] >= df.iloc[2]["Recall"]
 
 
+def test_threshold_analysis_high_threshold_zero_flagged():
+    """When threshold is so high nobody is flagged, zero_division is handled."""
+    y_true = np.array([1, 0, 0])
+    y_proba = np.array([0.6, 0.3, 0.1])
+    thresholds = np.array([0.99])
+
+    df = threshold_analysis(y_true, y_proba, thresholds, retained_value=600.0, contact_cost=50.0)
+
+    row = df.iloc[0]
+    assert row["Total_Flagged"] == 0
+    assert row["Precision"] == 0.0
+    assert row["Recall"] == 0.0
+    assert row["Net_per_Flagged"] == 0.0
+
+
 def test_quality_gates_all_pass():
     quality = {"min_roc_auc": 0.83, "min_recall": 0.70, "min_precision": 0.50}
     failures = check_quality_gates(roc_auc=0.88, recall=0.75, precision=0.55, quality=quality)

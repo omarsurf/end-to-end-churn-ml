@@ -52,6 +52,42 @@ def test_engineer_features_outputs_expected_columns():
         assert col in engineered.columns
 
 
+def test_engineer_features_with_precomputed_medians():
+    """fit=False uses provided train_medians instead of computing them."""
+    df = pd.DataFrame(
+        {
+            "tenure": [5, 20],
+            "MonthlyCharges": [60.0, 80.0],
+            "TotalCharges": [300.0, 1600.0],
+            "Contract": ["Month-to-month", "Two year"],
+            "InternetService": ["Fiber optic", "DSL"],
+            "OnlineSecurity": ["No", "Yes"],
+            "TechSupport": ["Yes", "No"],
+            "OnlineBackup": ["No", "Yes"],
+            "DeviceProtection": ["Yes", "No"],
+            "StreamingTV": ["Yes", "No"],
+            "StreamingMovies": ["No", "Yes"],
+            "PaymentMethod": ["Bank transfer (automatic)", "Electronic check"],
+        }
+    )
+    precomputed_medians = {"Fiber optic": 65.0, "DSL": 45.0}
+    engineered, returned_medians = engineer_features(
+        df, train_medians=precomputed_medians, fit=False, cfg={"engineering": {}}
+    )
+    # Should return the same medians passed in
+    assert returned_medians == precomputed_medians
+    # Overpay indicator: 60 - 65 = -5, 80 - 45 = 35
+    assert engineered.iloc[0]["overpay_indicator"] == pytest.approx(-5.0)
+    assert engineered.iloc[1]["overpay_indicator"] == pytest.approx(35.0)
+
+
+def test_clean_total_charges_valid_values():
+    df = pd.DataFrame({"TotalCharges": ["100.50", "200.75", "0"]})
+    cleaned = clean_total_charges(df)
+    assert cleaned.iloc[0] == pytest.approx(100.50)
+    assert cleaned.iloc[2] == pytest.approx(0.0)
+
+
 def test_processed_paths_exist_after_prepare():
     cfg = load_config(project_root() / "config" / "default.yaml")
     processed_dir = resolve_path(project_root(), cfg["paths"]["data_processed"])
