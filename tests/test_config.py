@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from churn_ml_decision.config import load_config, project_root
 
 
