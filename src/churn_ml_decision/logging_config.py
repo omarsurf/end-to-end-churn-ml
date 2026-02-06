@@ -76,17 +76,22 @@ def setup_logging(
 
     formatter = JSONFormatter()
 
-    log_path = Path(log_file)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-
-    file_handler = logging.FileHandler(log_path, encoding="utf-8")
-    file_handler.setFormatter(formatter)
-    file_handler.setLevel(level.upper())
-
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(formatter)
     stream_handler.setLevel(level.upper())
-
-    logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
+
+    log_path = Path(log_file)
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(level.upper())
+        logger.addHandler(file_handler)
+    except OSError as exc:
+        logger.warning(
+            "File logging unavailable; continuing with stream handler only.",
+            extra={"log_file": str(log_path), "error": str(exc)},
+        )
+
     return logger

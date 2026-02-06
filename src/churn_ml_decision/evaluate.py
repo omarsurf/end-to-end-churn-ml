@@ -177,6 +177,22 @@ def main() -> None:
             except ModelNotFoundError:
                 logger.warning("No registry model found, falling back to canonical model artifact.")
 
+        if not model_path.exists():
+            fallback_model_path = models_dir / cfg.artifacts.model_file
+            if fallback_model_path.exists():
+                logger.warning(
+                    "Registry model artifact missing; using canonical fallback model.",
+                    extra={
+                        "requested_model_path": str(model_path),
+                        "fallback_model_path": str(fallback_model_path),
+                        "model_id": model_id,
+                    },
+                )
+                model_path = fallback_model_path
+                model_id = None
+            else:
+                raise SystemExit("Model not found. Run churn-train first.")
+
         model = load_model_with_retry(model_path)
         logger.info(
             "Evaluate stage started",

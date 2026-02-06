@@ -12,6 +12,7 @@ from churn_ml_decision.evaluate import (
     select_threshold,
     threshold_analysis,
 )
+from churn_ml_decision.model_registry import ModelMetadata, ModelRegistry
 
 
 def test_threshold_analysis_computes_business_metrics():
@@ -237,6 +238,37 @@ def test_main_runs_without_error(evaluate_artifacts, monkeypatch):
     results_df = pd.read_csv(models_dir / "final_test_results.csv")
     assert "roc_auc" in results_df.columns
     assert "final_threshold" in results_df.columns
+
+
+def test_main_registry_missing_artifact_falls_back_to_canonical(evaluate_artifacts, monkeypatch):
+    """Registry can reference stale paths; evaluation should still run via canonical model."""
+    tmp_path, config_path = evaluate_artifacts
+    monkeypatch.setattr("churn_ml_decision.evaluate.project_root", lambda: tmp_path)
+
+    import yaml
+
+    config = yaml.safe_load(config_path.read_text())
+    registry_path = tmp_path / "models" / "registry.json"
+    config["registry"] = {"enabled": True, "use_current": True, "file": str(registry_path)}
+    config_path.write_text(yaml.dump(config))
+
+    registry = ModelRegistry(registry_path)
+    registry.register(
+        str(tmp_path / "models" / "missing.joblib"),
+        ModelMetadata(
+            model_id="missing-v1",
+            model_path=str(tmp_path / "models" / "missing.joblib"),
+            config_hash="abc",
+        ),
+    )
+    registry.promote("missing-v1")
+
+    with patch("sys.argv", ["evaluate", "--config", str(config_path)]):
+        main()
+
+    results_df = pd.read_csv(tmp_path / "models" / "final_test_results.csv")
+    assert "model_id" in results_df.columns
+    assert pd.isna(results_df.iloc[0]["model_id"])
 
 
 def test_main_with_mlflow_tracking(evaluate_artifacts, monkeypatch, tmp_path):

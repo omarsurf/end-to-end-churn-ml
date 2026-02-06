@@ -49,32 +49,71 @@ def parse_args() -> argparse.Namespace:
 def load_threshold(results_path: Path) -> float | None:
     if not results_path.exists():
         return None
-    latest = pd.read_csv(results_path).tail(1).iloc[0]
-    if "final_threshold" not in latest:
+    try:
+        results = pd.read_csv(results_path)
+    except (FileNotFoundError, pd.errors.EmptyDataError):
         return None
-    return float(latest["final_threshold"])
+    if results.empty or "final_threshold" not in results.columns:
+        return None
+    value = results["final_threshold"].iloc[-1]
+    if pd.isna(value):
+        return None
+    return float(value)
+
+
+def _resolve_registry_model_path(root: Path, raw_model_path: str) -> Path:
+    model_path = Path(raw_model_path)
+    if not model_path.is_absolute():
+        model_path = resolve_path(root, model_path)
+    return model_path
 
 
 def _resolve_model_path(root: Path, models_dir: Path, cfg) -> tuple[Path, str | None]:
+    fallback_path = models_dir / cfg.artifacts.model_file
     if cfg.registry.enabled and cfg.registry.use_current:
         registry = ModelRegistry(resolve_path(root, cfg.registry.file))
+
+        candidates: list[tuple[str, Path, str | None]] = []
         try:
             production = registry.get_production_model()
-            model_path = Path(production.model_path)
-            if not model_path.is_absolute():
-                model_path = resolve_path(root, model_path)
-            return model_path, production.model_id
+            candidates.append(
+                (
+                    "production",
+                    _resolve_registry_model_path(root, production.model_path),
+                    production.model_id,
+                )
+            )
         except ModelNotFoundError:
-            try:
-                latest = registry.get_latest_model()
-                model_path = Path(latest.model_path)
-                if not model_path.is_absolute():
-                    model_path = resolve_path(root, model_path)
-                return model_path, latest.model_id
-            except ModelNotFoundError:
-                pass
+            pass
 
-    return models_dir / cfg.artifacts.model_file, None
+        try:
+            latest = registry.get_latest_model()
+            latest_path = _resolve_registry_model_path(root, latest.model_path)
+            if not candidates or candidates[0][2] != latest.model_id:
+                candidates.append(("latest", latest_path, latest.model_id))
+        except ModelNotFoundError:
+            pass
+
+        for source, candidate_path, candidate_id in candidates:
+            if candidate_path.exists():
+                return candidate_path, candidate_id
+            logger.warning(
+                "Registry model artifact missing; trying fallback.",
+                extra={
+                    "source": source,
+                    "model_id": candidate_id,
+                    "model_path": str(candidate_path),
+                },
+            )
+
+    return fallback_path, None
+
+
+def _prediction_required_columns(cfg) -> list[str]:
+    target_col = cfg.validation.target_column
+    return [
+        col for col in cfg.validation.required_columns if col not in {target_col, "customerID"}
+    ]
 
 
 def _prepare_features_for_prediction(df: pd.DataFrame, cfg, models_dir: Path) -> pd.DataFrame:
@@ -116,6 +155,9 @@ def main() -> None:
         if not preprocessor_path.exists():
             raise SystemExit("Preprocessor not found. Run churn-prepare first.")
 
+        preprocessor = joblib.load(preprocessor_path)
+        model_required_columns = list(getattr(preprocessor, "feature_names_in_", []))
+
         model_path, model_id = _resolve_model_path(root, models_dir, cfg)
         if not model_path.exists():
             raise SystemExit("Model not found. Run churn-train first.")
@@ -130,8 +172,7 @@ def main() -> None:
             input_df.drop(columns=["customerID"]) if "customerID" in input_df.columns else input_df
         )
 
-        preprocessor = joblib.load(preprocessor_path)
-        required_columns = list(getattr(preprocessor, "feature_names_in_", []))
+        required_columns = _prediction_required_columns(cfg)
 
         valid_df, issues = validate_batch_input(
             features_df,
@@ -139,30 +180,60 @@ def main() -> None:
             strict=args.strict,
         )
         if issues:
-            failed_rows += len(issues)
+            has_batch_issue = any(issue.get("row") is None for issue in issues)
+            failed_rows += input_rows if has_batch_issue else len(issues)
             logger.warning("Input validation issues detected", extra={"issues_count": len(issues)})
 
         proba_all = pd.Series(0.5, index=features_df.index, dtype=float)
         if not valid_df.empty:
+            valid_features = pd.DataFrame()
             try:
-                valid_features = _prepare_features_for_prediction(valid_df, cfg, models_dir)
+                prepared_features = _prepare_features_for_prediction(valid_df, cfg, models_dir)
+                if model_required_columns:
+                    missing_model_columns = [
+                        col for col in model_required_columns if col not in prepared_features.columns
+                    ]
+                    if missing_model_columns:
+                        message = (
+                            "Prepared features missing columns required by preprocessor: "
+                            f"{missing_model_columns}"
+                        )
+                        if args.strict:
+                            raise DataValidationError(message)
+                        failed_rows += len(valid_df)
+                        logger.warning(
+                            "Prepared features missing required preprocessor columns; "
+                            "neutral fallback applied.",
+                            extra={
+                                "missing_count": len(missing_model_columns),
+                                "missing_sample": missing_model_columns[:10],
+                            },
+                        )
+                    else:
+                        valid_features = prepared_features.loc[:, model_required_columns]
+                else:
+                    valid_features = prepared_features
             except Exception as exc:
+                if args.strict:
+                    raise
                 logger.warning(
                     "Feature engineering failed during prediction; neutral fallback applied.",
                     extra={"error": str(exc)},
                 )
-                valid_features = valid_df
                 failed_rows += len(valid_df)
 
-            model = load_model_with_retry(model_path)
-            try:
-                transformed = preprocessor.transform(valid_features)
-                proba = model.predict_proba(transformed)[:, 1]
-                proba_all.loc[valid_df.index] = proba
-            except Exception:
-                failed_rows += len(valid_df)
-                logger.exception("Prediction failed; using neutral probability fallback.")
-                proba_all.loc[valid_df.index] = 0.5
+            if not valid_features.empty:
+                model = load_model_with_retry(model_path)
+                try:
+                    transformed = preprocessor.transform(valid_features)
+                    proba = model.predict_proba(transformed)[:, 1]
+                    proba_all.loc[valid_features.index] = proba
+                except Exception:
+                    if args.strict:
+                        raise
+                    failed_rows += len(valid_features)
+                    logger.exception("Prediction failed; using neutral probability fallback.")
+                    proba_all.loc[valid_features.index] = 0.5
 
         threshold = args.threshold
         if threshold is None:

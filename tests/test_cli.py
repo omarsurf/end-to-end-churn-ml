@@ -309,6 +309,7 @@ def test_health_check_main_healthy(cli_setup: tuple[Path, Path], capsys: pytest.
     tmp_path, config_path = cli_setup
 
     # Create all required artifacts
+    (tmp_path / "models" / "v1.joblib").write_text("fake")
     (tmp_path / "models" / "preprocessor.joblib").write_text("fake")
     (tmp_path / "models" / "best_model.joblib").write_text("fake")
     (tmp_path / "metrics" / "production_metrics.json").write_text("{}")
@@ -328,6 +329,7 @@ def test_health_check_main_healthy(cli_setup: tuple[Path, Path], capsys: pytest.
     assert output["status"] == "healthy"
     assert output["checks"]["preprocessor_exists"] is True
     assert output["checks"]["production_model_set"] is True
+    assert output["checks"]["production_model_exists"] is True
 
 
 def test_health_check_main_degraded(cli_setup: tuple[Path, Path], capsys: pytest.CaptureFixture):
@@ -367,3 +369,36 @@ def test_health_check_main_no_production_model(
     captured = capsys.readouterr()
     output = json.loads(captured.out)
     assert output["checks"]["production_model_set"] is False
+    assert output["checks"]["production_model_exists"] is False
+
+
+def test_health_check_main_missing_production_artifact(
+    cli_setup: tuple[Path, Path], capsys: pytest.CaptureFixture
+):
+    tmp_path, config_path = cli_setup
+
+    (tmp_path / "models" / "preprocessor.joblib").write_text("fake")
+    (tmp_path / "models" / "best_model.joblib").write_text("fake")
+    (tmp_path / "metrics" / "production_metrics.json").write_text("{}")
+
+    registry = ModelRegistry(tmp_path / "models" / "registry.json")
+    registry.register(
+        "models/missing.joblib",
+        ModelMetadata(
+            model_id="v-missing",
+            model_path="models/missing.joblib",
+            config_hash="abc",
+        ),
+    )
+    registry.promote("v-missing")
+
+    with patch("sys.argv", ["health-check", "--config", str(config_path)]):
+        with pytest.raises(SystemExit) as exc_info:
+            health_check_main()
+        assert exc_info.value.code == 1
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert output["status"] == "degraded"
+    assert output["checks"]["production_model_set"] is True
+    assert output["checks"]["production_model_exists"] is False

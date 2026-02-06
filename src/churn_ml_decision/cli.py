@@ -184,12 +184,19 @@ def health_check_main() -> None:
     if registry_path.exists():
         registry = ModelRegistry(registry_path)
         try:
-            production_model = registry.get_production_model().model_dump(mode="json")
+            production = registry.get_production_model()
+            production_model = production.model_dump(mode="json")
             checks["production_model_set"] = True
+            production_model_path = Path(production.model_path)
+            if not production_model_path.is_absolute():
+                production_model_path = resolve_path(root, production_model_path)
+            checks["production_model_exists"] = production_model_path.exists()
         except ModelNotFoundError:
             checks["production_model_set"] = False
+            checks["production_model_exists"] = False
     else:
         checks["production_model_set"] = False
+        checks["production_model_exists"] = False
 
     status = "healthy" if all(checks.values()) else "degraded"
     payload = {"status": status, "checks": checks, "production_model": production_model}
