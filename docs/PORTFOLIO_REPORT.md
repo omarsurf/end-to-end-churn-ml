@@ -1,64 +1,122 @@
 # Project Report
 
-## Overview
+## Project Overview
 
-This project builds a **churn prediction model** and turns it into a **business decision** for retention targeting. It includes an end-to-end notebook narrative and a production-ready CLI pipeline with full MLOps capabilities.
+Production-ready **churn prediction pipeline** that transforms customer data into actionable retention targeting decisions. Features end-to-end ML workflow with full MLOps capabilities.
+
+## Key Highlights
+
+| Metric | Value |
+|--------|-------|
+| **Test Coverage** | 89% |
+| **Production Modules** | 17 |
+| **Test Files** | 20 |
+| **CLI Commands** | 10 |
+| **Notebooks** | 11 |
 
 ## Dataset
 
 - **Source**: IBM Telco Customer Churn (Kaggle)
 - **Size**: 7,043 rows, 21 columns
 - **Target**: Binary churn prediction (Yes/No)
+- **Class Distribution**: ~27% churn rate
 
-## Pipeline (Production-Ready)
+## Architecture
 
-The CLI pipeline is config-driven (`config/default.yaml`) and fully reproducible:
-
-| Stage | Command | Description |
-|-------|---------|-------------|
-| **Prepare** | `churn-prepare` | Clean data, split train/val/test, engineer features, build preprocessing pipeline |
-| **Train** | `churn-train` | Train model candidates, select best by validation metric, log to MLflow |
-| **Evaluate** | `churn-evaluate` | Select threshold on validation, evaluate on test, compute business value |
-| **Predict** | `churn-predict` | Batch inference on new data |
+```
+Raw Data (CSV)
+     │
+     ▼
+churn-prepare ─────────────────────────────────────────┐
+  • Config validation (Pydantic)                       │
+  • Data quality checks                                │
+  • Feature engineering (14+ features)                 │
+  • Preprocessing pipeline                             │
+  • Drift reference export                             │
+     │                                                 │
+     ▼                                                 │
+Processed Arrays + Preprocessor                        │
+     │                                                 │
+     ▼                                                 │
+churn-train ───────────────────────────────────────────┤
+  • Candidate training (LR, XGB, LGBM)                 │
+  • Best-model selection (ROC-AUC)                     │
+  • MLflow logging                                     │
+  • Registry registration                              │
+     │                                                 │
+     ▼                                                 │
+Model Artifacts + Registry                             │
+     │                                                 │
+     ▼                                                 │
+churn-evaluate ────────────────────────────────────────┤
+  • Threshold optimization (recall-constrained)        │
+  • Test set evaluation                                │
+  • Quality gates enforcement                          │
+  • Business value metrics                             │
+     │                                                 │
+     ▼                                                 │
+churn-predict ─────────────────────────────────────────┘
+  • Input validation
+  • Registry-based model resolution
+  • Batch inference
+  • Production metrics
+```
 
 ## MLOps Stack
 
 | Tool | Purpose | Status |
 |------|---------|--------|
-| **DVC** | Pipeline orchestration & parameter tracking | Enabled |
-| **MLflow** | Experiment tracking, model logging, artifact storage | Enabled |
-| **JSONL Tracking** | Lightweight local experiment logs | Enabled |
-| **Model Registry** | Simple JSON-based model versioning | Enabled |
-| **GitHub Actions** | CI/CD with lint, pipeline, and tests | Active |
-| **Quality Gates** | Configurable min ROC-AUC, recall, precision | Enforced |
+| **DVC** | Pipeline orchestration & reproducibility | ✅ Active |
+| **MLflow** | Experiment tracking & model logging | ✅ Active |
+| **Pydantic** | Config & data validation | ✅ Active |
+| **Model Registry** | JSON-based version control | ✅ Active |
+| **GitHub Actions** | CI/CD pipeline | ✅ Active |
+| **Quality Gates** | Configurable metric thresholds | ✅ Active |
+| **Drift Detection** | KS-test based monitoring | ✅ Active |
 
-### DVC Pipeline
+## Production Modules
 
-```bash
-dvc repro        # Run full pipeline
-dvc dag          # Visualize pipeline DAG
-dvc params diff  # Compare parameter changes
-```
+| Module | Coverage | Purpose |
+|--------|----------|---------|
+| `prepare.py` | 93% | Data prep & feature engineering |
+| `train.py` | 81% | Model training & selection |
+| `evaluate.py` | 86% | Threshold optimization & metrics |
+| `predict.py` | 82% | Batch inference |
+| `config.py` | 92% | Configuration management |
+| `cli.py` | 98% | Command-line interface |
+| `model_registry.py` | 97% | Model versioning |
+| `monitoring.py` | 90% | Drift detection |
+| `validators.py` | 85% | Data validation |
+| `schemas.py` | 83% | Pydantic schemas |
+| `io.py` | 100% | File I/O utilities |
+| `track.py` | 100% | Experiment logging |
+| `registry.py` | 100% | Registry utilities |
+| `pipeline.py` | 100% | Pipeline orchestration |
+| `exceptions.py` | 100% | Custom exceptions |
+| `logging_config.py` | 100% | Logging setup |
+| `mlflow_utils.py` | 80% | MLflow integration |
 
-### MLflow Tracking
+## Modeling
 
-```bash
-mlflow ui --backend-store-uri mlruns
-```
+### Features
+- **14+ engineered features**: tenure groups, charge ratios, interaction terms
+- **7 categorical features**: Contract, InternetService, PaymentMethod, etc.
+- **Preprocessing**: StandardScaler + OneHotEncoder pipeline
 
-Tracks: model parameters, validation/test metrics, artifacts, and model files.
+### Model Candidates
+| Model | Status | Description |
+|-------|--------|-------------|
+| Logistic Regression | ✅ Default | L2 regularization, balanced weights |
+| XGBoost | Optional | Gradient boosting (400 estimators) |
+| LightGBM | Optional | Light gradient boosting |
 
-## Modeling Highlights
-
-- **Baseline**: Interpretable Logistic Regression with L2 regularization
-- **Candidates**: XGBoost, LightGBM (configurable, disabled by default)
-- **Feature Engineering**: 14+ engineered features for non-linear effects and interactions
-- **Threshold Selection**: Recall-constrained precision optimization on validation set
-- **Model Selection Metric**: ROC-AUC (configurable)
+### Selection Metric
+- **ROC-AUC** on validation set
+- Threshold optimized for **recall ≥ 0.70** with max precision
 
 ## Business Decision Framework
 
-The evaluation computes expected value (EV) using configurable business assumptions:
+Expected value calculation using configurable parameters:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -67,77 +125,76 @@ The evaluation computes expected value (EV) using configurable business assumpti
 | `contact_cost` | $50 | Cost per retention contact |
 
 **Output metrics**:
-- `Net_Value`: Total expected profit from retention campaign
+- `Net_Value`: Total expected profit from campaign
 - `Net_per_Flagged`: ROI per customer contacted
+- Threshold sweep: 0.20 to 0.85 (step 0.05)
 
-## Quality & Testing
+## Quality Gates
 
-| Metric | Value |
-|--------|-------|
-| **Test Coverage** | 90% |
-| **Linting** | ruff (zero warnings) |
-| **CI Pipeline** | lint + full pipeline + tests |
+| Metric | Threshold | Enforcement |
+|--------|-----------|-------------|
+| ROC-AUC | ≥ 0.83 | Pipeline fails if not met |
+| Recall | ≥ 0.70 | Pipeline fails if not met |
+| Precision | ≥ 0.50 | Pipeline fails if not met |
 
-Key modules coverage:
-- `prepare.py`: 99%
-- `evaluate.py`: 94%
-- `io.py`, `track.py`, `registry.py`: 100%
+## Typical Results
 
-## Latest Results
+With default configuration:
+- **ROC-AUC**: ~0.84
+- **Recall**: ~0.78 (at optimized threshold)
+- **Precision**: ~0.52
+- **Optimal Threshold**: ~0.35
 
-See `models/final_test_results.csv` for the most recent evaluation.
-
-Typical results with default config:
-- ROC-AUC: ~0.84
-- Recall: ~0.78 (at selected threshold)
-- Precision: ~0.52
-
-## Quickstart
+## CLI Commands
 
 ```bash
-# Install
-pip install -e ".[dev,ops]"
+# Pipeline
+churn-prepare --config config/default.yaml
+churn-train --config config/default.yaml
+churn-evaluate --config config/default.yaml
+churn-predict --config config/default.yaml --input data/new.csv --output pred.csv
 
-# Run pipeline
-make pipeline    # or: dvc repro
+# Registry
+churn-model-info --config config/default.yaml
+churn-model-promote --config config/default.yaml --model-id <id>
+churn-model-rollback --config config/default.yaml
 
-# Run tests
+# Monitoring
+churn-check-drift --config config/default.yaml --input data/batch.csv
+churn-health-check --config config/default.yaml
+churn-validate-config --config config/default.yaml
+```
+
+## Testing
+
+```bash
+# Run all tests
 make test
 
-# View experiments
-mlflow ui --backend-store-uri mlruns
+# With coverage report
+python -m pytest --cov=src --cov-report=html
+
+# View coverage
+open htmlcov/index.html
 ```
 
-## Project Structure
+## Project Links
 
-```
-churn_ml_decision/
-├── .github/workflows/      # CI configuration
-├── config/
-│   └── default.yaml        # Central configuration
-├── data/
-│   ├── raw/                # Source dataset
-│   └── processed/          # Train/val/test arrays
-├── docs/                   # Documentation
-├── models/                 # Trained models & artifacts
-├── notebooks/              # 11 exploratory notebooks
-├── src/churn_ml_decision/  # Production package
-├── tests/                  # Unit & integration tests
-├── dvc.yaml                # DVC pipeline definition
-├── Makefile                # Build automation
-└── pyproject.toml          # Project metadata & dependencies
-```
+- **Documentation**: `docs/`
+- **Configuration**: `config/default.yaml`
+- **Experiments**: `mlflow ui --backend-store-uri mlruns`
+- **Reports**: `models/final_test_results.csv`
 
 ## Limitations
 
-- Feature engineering kept minimal for interpretability
-- Single-node training (no distributed)
+- Single-node training (no distributed computing)
 - Local MLflow backend (no remote server)
+- JSON-based registry (not production database)
 
 ## Future Improvements
 
-1. Add remote MLflow tracking server
-2. Implement model A/B testing framework
-3. Add data drift monitoring
-4. Containerize with Docker for deployment
-5. Add API endpoint for real-time predictions
+1. Remote MLflow tracking server
+2. Docker containerization
+3. REST API for real-time predictions
+4. A/B testing framework
+5. Enhanced drift monitoring with alerting
