@@ -2,16 +2,27 @@ from __future__ import annotations
 
 import argparse
 import logging
+import time
 from pathlib import Path
 
 import joblib
 import pandas as pd
+from tenacity import retry, stop_after_attempt, wait_exponential
 
-from .config import load_config, project_root, resolve_path
-from .prepare import engineer_features, clean_total_charges
-from .registry import current_model_path
+from .config import load_typed_config, log_loaded_config, project_root, resolve_path
+from .exceptions import DataValidationError, ModelNotFoundError
+from .logging_config import setup_logging
+from .model_registry import ModelRegistry
+from .monitoring import ProductionMetricsTracker
+from .prepare import clean_total_charges, engineer_features
+from .schemas import validate_batch_input, validate_prediction_outputs
 
 logger = logging.getLogger(__name__)
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8), reraise=True)
+def load_model_with_retry(model_path: Path):
+    return joblib.load(model_path)
 
 
 def parse_args() -> argparse.Namespace:
@@ -24,7 +35,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input", type=Path, required=True, help="Input CSV of customers.")
     parser.add_argument("--output", type=Path, required=True, help="Output CSV with scores.")
-    parser.add_argument("--threshold", type=float, default=None, help="Optional threshold for label.")
+    parser.add_argument(
+        "--threshold", type=float, default=None, help="Optional threshold for label."
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail if any input rows are invalid.",
+    )
     return parser.parse_args()
 
 
@@ -32,71 +50,168 @@ def load_threshold(results_path: Path) -> float | None:
     if not results_path.exists():
         return None
     latest = pd.read_csv(results_path).tail(1).iloc[0]
+    if "final_threshold" not in latest:
+        return None
     return float(latest["final_threshold"])
 
 
+def _resolve_model_path(root: Path, models_dir: Path, cfg) -> tuple[Path, str | None]:
+    if cfg.registry.enabled and cfg.registry.use_current:
+        registry = ModelRegistry(resolve_path(root, cfg.registry.file))
+        try:
+            production = registry.get_production_model()
+            model_path = Path(production.model_path)
+            if not model_path.is_absolute():
+                model_path = resolve_path(root, model_path)
+            return model_path, production.model_id
+        except ModelNotFoundError:
+            try:
+                latest = registry.get_latest_model()
+                model_path = Path(latest.model_path)
+                if not model_path.is_absolute():
+                    model_path = resolve_path(root, model_path)
+                return model_path, latest.model_id
+            except ModelNotFoundError:
+                pass
+
+    return models_dir / cfg.artifacts.model_file, None
+
+
+def _prepare_features_for_prediction(df: pd.DataFrame, cfg, models_dir: Path) -> pd.DataFrame:
+    df = df.copy()
+    if "TotalCharges" in df.columns:
+        df["TotalCharges"] = clean_total_charges(df)
+
+    if not cfg.engineering.enabled:
+        return df
+
+    medians_path = models_dir / cfg.artifacts.train_medians_file
+    if not medians_path.exists():
+        raise FileNotFoundError(f"Train medians not found: {medians_path}")
+
+    train_medians = pd.read_json(medians_path, typ="series").to_dict()
+    engineered, _ = engineer_features(df, train_medians=train_medians, cfg=cfg)
+    return engineered
+
+
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
     args = parse_args()
-    cfg = load_config(args.config)
     root = project_root()
+    cfg = load_typed_config(args.config)
+    pipeline_logger = setup_logging(
+        log_file=resolve_path(root, cfg.logging.file),
+        level=cfg.logging.level,
+        logger_name=cfg.logging.logger_name,
+    )
+    log_loaded_config(pipeline_logger, cfg, args.config)
 
-    models_dir = resolve_path(root, cfg["paths"]["models"])
-    preprocessor_path = models_dir / cfg["artifacts"]["preprocessor_file"]
-    if not preprocessor_path.exists():
-        raise SystemExit("Preprocessor not found. Run churn-prepare first.")
+    batch_started = time.perf_counter()
+    input_rows = 0
+    failed_rows = 0
+    model_id: str | None = None
 
-    registry_cfg = cfg.get("registry", {})
-    model_path = None
-    if registry_cfg.get("enabled", False) and registry_cfg.get("use_current", False):
-        current = current_model_path(resolve_path(root, registry_cfg["file"]))
-        if current:
-            model_path = Path(current)
-    if model_path is None:
-        model_path = models_dir / cfg["artifacts"]["model_file"]
+    try:
+        models_dir = resolve_path(root, cfg.paths.models)
+        preprocessor_path = models_dir / cfg.artifacts.preprocessor_file
+        if not preprocessor_path.exists():
+            raise SystemExit("Preprocessor not found. Run churn-prepare first.")
 
-    if not model_path.exists():
-        raise SystemExit("Model not found. Run churn-train first.")
+        model_path, model_id = _resolve_model_path(root, models_dir, cfg)
+        if not model_path.exists():
+            raise SystemExit("Model not found. Run churn-train first.")
 
-    df = pd.read_csv(args.input)
-    if "Churn" in df.columns:
-        df = df.drop(columns=["Churn"])
-    customer_ids = df["customerID"] if "customerID" in df.columns else None
-    if "customerID" in df.columns:
-        df = df.drop(columns=["customerID"])
+        input_df = pd.read_csv(args.input)
+        input_rows = int(len(input_df))
+        if "Churn" in input_df.columns:
+            input_df = input_df.drop(columns=["Churn"])
 
-    df["TotalCharges"] = clean_total_charges(df)
+        customer_ids = input_df["customerID"] if "customerID" in input_df.columns else None
+        features_df = (
+            input_df.drop(columns=["customerID"]) if "customerID" in input_df.columns else input_df
+        )
 
-    train_medians_file = cfg["artifacts"].get("train_medians_file", "train_medians.json")
-    medians_path = models_dir / train_medians_file
-    train_medians = None
-    if medians_path.exists():
-        train_medians = pd.read_json(medians_path, typ="series").to_dict()
-    if cfg.get("engineering", {}).get("enabled", False) and train_medians is None:
-        raise SystemExit("Train medians not found. Run churn-prepare first.")
+        preprocessor = joblib.load(preprocessor_path)
+        required_columns = list(getattr(preprocessor, "feature_names_in_", []))
 
-    if cfg.get("engineering", {}).get("enabled", False):
-        df, _ = engineer_features(df, train_medians=train_medians, cfg=cfg)
+        valid_df, issues = validate_batch_input(
+            features_df,
+            required_columns=required_columns,
+            strict=args.strict,
+        )
+        if issues:
+            failed_rows += len(issues)
+            logger.warning("Input validation issues detected", extra={"issues_count": len(issues)})
 
-    preprocessor = joblib.load(preprocessor_path)
-    model = joblib.load(model_path)
+        proba_all = pd.Series(0.5, index=features_df.index, dtype=float)
+        if not valid_df.empty:
+            try:
+                valid_features = _prepare_features_for_prediction(valid_df, cfg, models_dir)
+            except Exception as exc:
+                logger.warning(
+                    "Feature engineering failed during prediction; neutral fallback applied.",
+                    extra={"error": str(exc)},
+                )
+                valid_features = valid_df
+                failed_rows += len(valid_df)
 
-    x = preprocessor.transform(df)
-    proba = model.predict_proba(x)[:, 1]
+            model = load_model_with_retry(model_path)
+            try:
+                transformed = preprocessor.transform(valid_features)
+                proba = model.predict_proba(transformed)[:, 1]
+                proba_all.loc[valid_df.index] = proba
+            except Exception:
+                failed_rows += len(valid_df)
+                logger.exception("Prediction failed; using neutral probability fallback.")
+                proba_all.loc[valid_df.index] = 0.5
 
-    threshold = args.threshold
-    if threshold is None:
-        threshold = load_threshold(models_dir / cfg["artifacts"]["final_results_file"])
+        threshold = args.threshold
+        if threshold is None:
+            threshold = load_threshold(models_dir / cfg.artifacts.final_results_file)
+        if threshold is None:
+            threshold = 0.5
 
-    output = pd.DataFrame({"churn_probability": proba})
-    if threshold is not None:
-        output["churn_prediction"] = (proba >= threshold).astype(int)
+        retained_value = float(
+            cfg.business.retained_value or (cfg.business.clv * cfg.business.success_rate)
+        )
+        contact_cost = float(cfg.business.contact_cost)
 
-    if customer_ids is not None:
-        output.insert(0, "customerID", customer_ids)
+        output = pd.DataFrame({"churn_probability": proba_all.astype(float)})
+        output["churn_prediction"] = output["churn_probability"].ge(threshold).astype(int)
+        output["decision"] = output["churn_prediction"].map({1: "contact", 0: "no_contact"})
+        output["expected_value"] = output["churn_probability"] * retained_value - contact_cost
+        output["model_id"] = model_id
+        if customer_ids is not None:
+            output.insert(0, "customerID", customer_ids)
 
-    output.to_csv(args.output, index=False)
-    logger.info("Wrote predictions to %s", args.output)
+        validate_prediction_outputs(output, threshold=threshold, strict=True)
+
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        output.to_csv(args.output, index=False)
+        logger.info(
+            "Predictions written",
+            extra={
+                "output_path": str(args.output),
+                "rows": int(len(output)),
+                "failed_rows": int(failed_rows),
+                "threshold": float(threshold),
+                "model_id": model_id,
+            },
+        )
+    except DataValidationError:
+        logger.exception("Prediction aborted due to input validation errors.")
+        raise
+    except Exception:
+        logger.exception("Predict stage failed")
+        raise
+    finally:
+        latency_ms = (time.perf_counter() - batch_started) * 1000
+        if cfg.monitoring.enabled:
+            tracker = ProductionMetricsTracker(resolve_path(root, cfg.monitoring.metrics_file))
+            tracker.update_prediction_metrics(
+                batch_size=input_rows,
+                failed_rows=int(failed_rows),
+                latency_ms=float(latency_ms),
+            )
 
 
 if __name__ == "__main__":

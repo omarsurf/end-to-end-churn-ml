@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 from churn_ml_decision.config import load_config, project_root, resolve_path
+from churn_ml_decision.exceptions import DataValidationError
 from churn_ml_decision.prepare import clean_total_charges, engineer_features, main
 
 
@@ -126,25 +127,27 @@ def create_synthetic_raw_data(n_samples: int = 500) -> pd.DataFrame:
         "Credit card (automatic)",
     ]
 
-    df = pd.DataFrame({
-        "customerID": [f"CUST-{i:04d}" for i in range(n_samples)],
-        "tenure": np.random.randint(0, 72, n_samples),
-        "MonthlyCharges": np.random.uniform(20, 100, n_samples).round(2),
-        "TotalCharges": np.random.uniform(0, 5000, n_samples).round(2),
-        "Contract": np.random.choice(contracts, n_samples),
-        "InternetService": np.random.choice(internet_services, n_samples),
-        "OnlineSecurity": np.random.choice(yes_no, n_samples),
-        "TechSupport": np.random.choice(yes_no, n_samples),
-        "OnlineBackup": np.random.choice(yes_no, n_samples),
-        "DeviceProtection": np.random.choice(yes_no, n_samples),
-        "StreamingTV": np.random.choice(yes_no, n_samples),
-        "StreamingMovies": np.random.choice(yes_no, n_samples),
-        "PaymentMethod": np.random.choice(payment_methods, n_samples),
-        "Dependents": np.random.choice(yes_no, n_samples),
-        "PaperlessBilling": np.random.choice(yes_no, n_samples),
-        "SeniorCitizen": np.random.randint(0, 2, n_samples),
-        "Churn": np.random.choice(["Yes", "No"], n_samples, p=[0.26, 0.74]),
-    })
+    df = pd.DataFrame(
+        {
+            "customerID": [f"CUST-{i:04d}" for i in range(n_samples)],
+            "tenure": np.random.randint(0, 72, n_samples),
+            "MonthlyCharges": np.random.uniform(20, 100, n_samples).round(2),
+            "TotalCharges": np.random.uniform(0, 5000, n_samples).round(2),
+            "Contract": np.random.choice(contracts, n_samples),
+            "InternetService": np.random.choice(internet_services, n_samples),
+            "OnlineSecurity": np.random.choice(yes_no, n_samples),
+            "TechSupport": np.random.choice(yes_no, n_samples),
+            "OnlineBackup": np.random.choice(yes_no, n_samples),
+            "DeviceProtection": np.random.choice(yes_no, n_samples),
+            "StreamingTV": np.random.choice(yes_no, n_samples),
+            "StreamingMovies": np.random.choice(yes_no, n_samples),
+            "PaymentMethod": np.random.choice(payment_methods, n_samples),
+            "Dependents": np.random.choice(yes_no, n_samples),
+            "PaperlessBilling": np.random.choice(yes_no, n_samples),
+            "SeniorCitizen": np.random.randint(0, 2, n_samples),
+            "Churn": np.random.choice(["Yes", "No"], n_samples, p=[0.26, 0.74]),
+        }
+    )
     # Some rows have blank TotalCharges (like real data)
     # Convert to string first to allow blank values
     df["TotalCharges"] = df["TotalCharges"].astype(str)
@@ -237,9 +240,7 @@ def test_main_runs_full_pipeline(prepare_artifacts, monkeypatch):
     """Integration test for prepare main() with synthetic data."""
     tmp_path, config_path = prepare_artifacts
 
-    monkeypatch.setattr(
-        "churn_ml_decision.prepare.project_root", lambda: tmp_path
-    )
+    monkeypatch.setattr("churn_ml_decision.prepare.project_root", lambda: tmp_path)
 
     with patch("sys.argv", ["prepare", "--config", str(config_path)]):
         main()
@@ -272,9 +273,7 @@ def test_main_without_feature_engineering(prepare_artifacts, monkeypatch):
     """Test prepare main() with feature engineering disabled."""
     tmp_path, config_path = prepare_artifacts
 
-    monkeypatch.setattr(
-        "churn_ml_decision.prepare.project_root", lambda: tmp_path
-    )
+    monkeypatch.setattr("churn_ml_decision.prepare.project_root", lambda: tmp_path)
 
     # Update config to disable engineering and use only base features
     config = yaml.safe_load(config_path.read_text())
@@ -298,9 +297,7 @@ def test_main_validates_feature_columns(prepare_artifacts, monkeypatch):
     """Test that main() raises when configured features are missing."""
     tmp_path, config_path = prepare_artifacts
 
-    monkeypatch.setattr(
-        "churn_ml_decision.prepare.project_root", lambda: tmp_path
-    )
+    monkeypatch.setattr("churn_ml_decision.prepare.project_root", lambda: tmp_path)
 
     # Add a non-existent feature to config
     config = yaml.safe_load(config_path.read_text())
@@ -308,7 +305,7 @@ def test_main_validates_feature_columns(prepare_artifacts, monkeypatch):
     config_path.write_text(yaml.dump(config))
 
     with patch("sys.argv", ["prepare", "--config", str(config_path)]):
-        with pytest.raises(ValueError, match="Missing features"):
+        with pytest.raises(DataValidationError, match="Missing features"):
             main()
 
 
@@ -316,9 +313,7 @@ def test_main_split_ratios(prepare_artifacts, monkeypatch):
     """Test that train/val/test splits have correct proportions."""
     tmp_path, config_path = prepare_artifacts
 
-    monkeypatch.setattr(
-        "churn_ml_decision.prepare.project_root", lambda: tmp_path
-    )
+    monkeypatch.setattr("churn_ml_decision.prepare.project_root", lambda: tmp_path)
 
     with patch("sys.argv", ["prepare", "--config", str(config_path)]):
         main()

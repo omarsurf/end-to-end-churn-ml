@@ -5,7 +5,12 @@ import numpy as np
 import pytest
 from sklearn.linear_model import LogisticRegression
 
-from churn_ml_decision.train import build_model, main as train_main
+from churn_ml_decision.train import (
+    _extract_feature_importance,
+    _load_feature_names,
+    build_model,
+    main as train_main,
+)
 
 
 def test_build_model_logistic_regression():
@@ -51,44 +56,48 @@ def _make_synthetic_data(tmp_path: Path, n_train: int = 200, n_val: int = 50, n_
 def _write_train_config(tmp_path, data_dir, models_dir, candidates_yaml: str) -> Path:
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(
-        "\n".join([
-            "paths:",
-            f"  data_raw: {tmp_path / 'data' / 'raw'}",
-            f"  data_processed: {data_dir}",
-            f"  models: {models_dir}",
-            "model:",
-            "  name: logistic_regression",
-            "  version: 1",
-            "  selection_metric: roc_auc",
-            "  candidates:",
-            candidates_yaml,
-            "artifacts:",
-            "  model_file: best_model.joblib",
-            "tracking:",
-            "  enabled: false",
-            "registry:",
-            "  enabled: false",
-        ])
+        "\n".join(
+            [
+                "paths:",
+                f"  data_raw: {tmp_path / 'data' / 'raw'}",
+                f"  data_processed: {data_dir}",
+                f"  models: {models_dir}",
+                "model:",
+                "  name: logistic_regression",
+                "  version: 1",
+                "  selection_metric: roc_auc",
+                "  candidates:",
+                candidates_yaml,
+                "artifacts:",
+                "  model_file: best_model.joblib",
+                "tracking:",
+                "  enabled: false",
+                "registry:",
+                "  enabled: false",
+            ]
+        )
     )
     return cfg_path
 
 
 def test_train_selects_best_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     data_dir, models_dir = _make_synthetic_data(tmp_path)
-    candidates = "\n".join([
-        "    - name: lr_weak",
-        "      type: logistic_regression",
-        "      enabled: true",
-        "      params:",
-        "        C: 0.001",
-        "        solver: liblinear",
-        "    - name: lr_strong",
-        "      type: logistic_regression",
-        "      enabled: true",
-        "      params:",
-        "        C: 10.0",
-        "        solver: liblinear",
-    ])
+    candidates = "\n".join(
+        [
+            "    - name: lr_weak",
+            "      type: logistic_regression",
+            "      enabled: true",
+            "      params:",
+            "        C: 0.001",
+            "        solver: liblinear",
+            "    - name: lr_strong",
+            "      type: logistic_regression",
+            "      enabled: true",
+            "      params:",
+            "        C: 10.0",
+            "        solver: liblinear",
+        ]
+    )
     cfg_path = _write_train_config(tmp_path, data_dir, models_dir, candidates)
 
     monkeypatch.setattr("sys.argv", ["churn-train", "--config", str(cfg_path)])
@@ -102,20 +111,22 @@ def test_train_selects_best_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
 def test_train_skips_disabled_candidates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     data_dir, models_dir = _make_synthetic_data(tmp_path)
-    candidates = "\n".join([
-        "    - name: lr_enabled",
-        "      type: logistic_regression",
-        "      enabled: true",
-        "      params:",
-        "        C: 1.0",
-        "        solver: liblinear",
-        "    - name: lr_disabled",
-        "      type: logistic_regression",
-        "      enabled: false",
-        "      params:",
-        "        C: 10.0",
-        "        solver: liblinear",
-    ])
+    candidates = "\n".join(
+        [
+            "    - name: lr_enabled",
+            "      type: logistic_regression",
+            "      enabled: true",
+            "      params:",
+            "        C: 1.0",
+            "        solver: liblinear",
+            "    - name: lr_disabled",
+            "      type: logistic_regression",
+            "      enabled: false",
+            "      params:",
+            "        C: 10.0",
+            "        solver: liblinear",
+        ]
+    )
     cfg_path = _write_train_config(tmp_path, data_dir, models_dir, candidates)
 
     monkeypatch.setattr("sys.argv", ["churn-train", "--config", str(cfg_path)])
@@ -127,11 +138,13 @@ def test_train_skips_disabled_candidates(tmp_path: Path, monkeypatch: pytest.Mon
 
 def test_train_no_enabled_candidates_exits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     data_dir, models_dir = _make_synthetic_data(tmp_path)
-    candidates = "\n".join([
-        "    - name: lr_disabled",
-        "      type: logistic_regression",
-        "      enabled: false",
-    ])
+    candidates = "\n".join(
+        [
+            "    - name: lr_disabled",
+            "      type: logistic_regression",
+            "      enabled: false",
+        ]
+    )
     cfg_path = _write_train_config(tmp_path, data_dir, models_dir, candidates)
 
     monkeypatch.setattr("sys.argv", ["churn-train", "--config", str(cfg_path)])
@@ -142,39 +155,43 @@ def test_train_no_enabled_candidates_exits(tmp_path: Path, monkeypatch: pytest.M
 def test_train_logs_to_mlflow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     data_dir, models_dir = _make_synthetic_data(tmp_path)
     mlruns_dir = tmp_path / "mlruns"
-    candidates = "\n".join([
-        "    - name: lr_test",
-        "      type: logistic_regression",
-        "      enabled: true",
-        "      params:",
-        "        C: 1.0",
-        "        solver: liblinear",
-    ])
+    candidates = "\n".join(
+        [
+            "    - name: lr_test",
+            "      type: logistic_regression",
+            "      enabled: true",
+            "      params:",
+            "        C: 1.0",
+            "        solver: liblinear",
+        ]
+    )
     cfg_path = tmp_path / "config.yaml"
     cfg_path.write_text(
-        "\n".join([
-            "paths:",
-            f"  data_raw: {tmp_path / 'data' / 'raw'}",
-            f"  data_processed: {data_dir}",
-            f"  models: {models_dir}",
-            "model:",
-            "  name: logistic_regression",
-            "  version: 1",
-            "  selection_metric: roc_auc",
-            "  candidates:",
-            candidates,
-            "artifacts:",
-            "  model_file: best_model.joblib",
-            "tracking:",
-            "  enabled: false",
-            "registry:",
-            "  enabled: false",
-            "mlflow:",
-            "  enabled: true",
-            f"  tracking_uri: {mlruns_dir}",
-            "  experiment_name: test-experiment",
-            "  register_model: false",
-        ])
+        "\n".join(
+            [
+                "paths:",
+                f"  data_raw: {tmp_path / 'data' / 'raw'}",
+                f"  data_processed: {data_dir}",
+                f"  models: {models_dir}",
+                "model:",
+                "  name: logistic_regression",
+                "  version: 1",
+                "  selection_metric: roc_auc",
+                "  candidates:",
+                candidates,
+                "artifacts:",
+                "  model_file: best_model.joblib",
+                "tracking:",
+                "  enabled: false",
+                "registry:",
+                "  enabled: false",
+                "mlflow:",
+                "  enabled: true",
+                f"  tracking_uri: {mlruns_dir}",
+                "  experiment_name: test-experiment",
+                "  register_model: false",
+            ]
+        )
     )
 
     monkeypatch.setattr("sys.argv", ["churn-train", "--config", str(cfg_path)])
@@ -184,3 +201,104 @@ def test_train_logs_to_mlflow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # Verify at least one experiment directory was created
     experiment_dirs = [d for d in mlruns_dir.iterdir() if d.is_dir() and d.name != ".trash"]
     assert len(experiment_dirs) >= 1
+
+
+# =============================================================================
+# Additional tests for helper functions
+# =============================================================================
+
+
+def test_load_feature_names_success(tmp_path: Path):
+    """Test loading feature names from CSV."""
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    feature_file = models_dir / "final_feature_names.csv"
+    feature_file.write_text("feature_name\ntenure\nMonthlyCharges\nTotalCharges\n")
+
+    features = _load_feature_names(models_dir)
+
+    assert features == ["tenure", "MonthlyCharges", "TotalCharges"]
+
+
+def test_load_feature_names_missing_file(tmp_path: Path):
+    """Test loading feature names returns empty list when file missing."""
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+
+    features = _load_feature_names(models_dir)
+
+    assert features == []
+
+
+def test_load_feature_names_wrong_column(tmp_path: Path):
+    """Test loading feature names returns empty when column missing."""
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    feature_file = models_dir / "final_feature_names.csv"
+    feature_file.write_text("wrong_column\nval1\nval2\n")
+
+    features = _load_feature_names(models_dir)
+
+    assert features == []
+
+
+def test_extract_feature_importance_coef():
+    """Test extracting feature importance from logistic regression coef_."""
+    model = LogisticRegression()
+    # Simulate fitted model
+    model.coef_ = np.array([[0.5, -0.3, 0.8]])
+    model.classes_ = np.array([0, 1])
+
+    features = ["f1", "f2", "f3"]
+    importance = _extract_feature_importance(model, features)
+
+    assert importance == {"f1": 0.5, "f2": 0.3, "f3": 0.8}
+
+
+def test_extract_feature_importance_tree():
+    """Test extracting feature importance from tree-based model."""
+
+    class MockTreeModel:
+        feature_importances_ = np.array([0.1, 0.5, 0.4])
+
+    model = MockTreeModel()
+    features = ["a", "b", "c"]
+    importance = _extract_feature_importance(model, features)
+
+    assert importance == {"a": 0.1, "b": 0.5, "c": 0.4}
+
+
+def test_extract_feature_importance_no_features():
+    """Test feature importance with no feature names generates defaults."""
+    model = LogisticRegression()
+    model.coef_ = np.array([[0.1, 0.2]])
+    model.classes_ = np.array([0, 1])
+
+    importance = _extract_feature_importance(model, [])
+
+    assert importance == {"feature_0": 0.1, "feature_1": 0.2}
+
+
+def test_extract_feature_importance_mismatched_size():
+    """Test feature importance with mismatched feature name count."""
+    model = LogisticRegression()
+    model.coef_ = np.array([[0.1, 0.2, 0.3]])
+    model.classes_ = np.array([0, 1])
+
+    # Only 2 feature names but 3 coefs
+    importance = _extract_feature_importance(model, ["f1", "f2"])
+
+    assert len(importance) == 2
+    assert list(importance.keys()) == ["f1", "f2"]
+
+
+def test_extract_feature_importance_no_attr():
+    """Test feature importance returns empty for model without coef_ or feature_importances_."""
+
+    class MockModel:
+        pass
+
+    model = MockModel()
+    importance = _extract_feature_importance(model, ["f1"])
+
+    assert importance == {}

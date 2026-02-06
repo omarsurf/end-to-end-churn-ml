@@ -101,12 +101,14 @@ def test_quality_gates_boundary_values():
 
 def test_select_threshold_high_recall_exists():
     """When rows meet min_recall, pick the one with best precision."""
-    df = pd.DataFrame({
-        "Threshold": [0.3, 0.5, 0.7],
-        "Precision": [0.60, 0.75, 0.90],
-        "Recall": [0.95, 0.80, 0.50],
-        "F1_Score": [0.73, 0.77, 0.63],
-    })
+    df = pd.DataFrame(
+        {
+            "Threshold": [0.3, 0.5, 0.7],
+            "Precision": [0.60, 0.75, 0.90],
+            "Recall": [0.95, 0.80, 0.50],
+            "F1_Score": [0.73, 0.77, 0.63],
+        }
+    )
     selected, reason = select_threshold(df, min_recall=0.70)
     assert selected["Threshold"] == 0.5
     assert "Recall >= 0.70" in reason
@@ -114,12 +116,14 @@ def test_select_threshold_high_recall_exists():
 
 def test_select_threshold_fallback_to_f1():
     """When no row meets min_recall, fallback to best F1."""
-    df = pd.DataFrame({
-        "Threshold": [0.6, 0.7, 0.8],
-        "Precision": [0.70, 0.80, 0.95],
-        "Recall": [0.50, 0.40, 0.20],
-        "F1_Score": [0.58, 0.53, 0.33],
-    })
+    df = pd.DataFrame(
+        {
+            "Threshold": [0.6, 0.7, 0.8],
+            "Precision": [0.70, 0.80, 0.95],
+            "Recall": [0.50, 0.40, 0.20],
+            "F1_Score": [0.58, 0.53, 0.33],
+        }
+    )
     selected, reason = select_threshold(df, min_recall=0.70)
     assert selected["Threshold"] == 0.6
     assert "Best F1" in reason
@@ -127,12 +131,14 @@ def test_select_threshold_fallback_to_f1():
 
 def test_select_threshold_single_row():
     """Single row edge case."""
-    df = pd.DataFrame({
-        "Threshold": [0.5],
-        "Precision": [0.80],
-        "Recall": [0.75],
-        "F1_Score": [0.77],
-    })
+    df = pd.DataFrame(
+        {
+            "Threshold": [0.5],
+            "Precision": [0.80],
+            "Recall": [0.75],
+            "F1_Score": [0.77],
+        }
+    )
     selected, reason = select_threshold(df, min_recall=0.70)
     assert selected["Threshold"] == 0.5
 
@@ -173,6 +179,7 @@ def evaluate_artifacts(tmp_path):
     model.fit(X_train, y_train)
 
     import joblib
+
     joblib.dump(model, models_dir / "best_model.joblib")
 
     # Write train summary
@@ -206,6 +213,7 @@ def evaluate_artifacts(tmp_path):
     }
     config_path = config_dir / "test.yaml"
     import yaml
+
     config_path.write_text(yaml.dump(config))
 
     return tmp_path, config_path
@@ -215,9 +223,7 @@ def test_main_runs_without_error(evaluate_artifacts, monkeypatch):
     """Integration test for evaluate main() with mocked project_root."""
     tmp_path, config_path = evaluate_artifacts
 
-    monkeypatch.setattr(
-        "churn_ml_decision.evaluate.project_root", lambda: tmp_path
-    )
+    monkeypatch.setattr("churn_ml_decision.evaluate.project_root", lambda: tmp_path)
 
     with patch("sys.argv", ["evaluate", "--config", str(config_path)]):
         main()
@@ -237,12 +243,11 @@ def test_main_with_mlflow_tracking(evaluate_artifacts, monkeypatch, tmp_path):
     """Test that MLflow tracking works when enabled."""
     artifact_path, config_path = evaluate_artifacts
 
-    monkeypatch.setattr(
-        "churn_ml_decision.evaluate.project_root", lambda: artifact_path
-    )
+    monkeypatch.setattr("churn_ml_decision.evaluate.project_root", lambda: artifact_path)
 
     # Update config to enable MLflow
     import yaml
+
     config = yaml.safe_load(config_path.read_text())
     config["mlflow"] = {
         "enabled": True,
@@ -263,12 +268,11 @@ def test_main_quality_gate_failure(evaluate_artifacts, monkeypatch):
     """Test that quality gate failures raise SystemExit."""
     tmp_path, config_path = evaluate_artifacts
 
-    monkeypatch.setattr(
-        "churn_ml_decision.evaluate.project_root", lambda: tmp_path
-    )
+    monkeypatch.setattr("churn_ml_decision.evaluate.project_root", lambda: tmp_path)
 
     # Update config with impossible quality gates
     import yaml
+
     config = yaml.safe_load(config_path.read_text())
     config["quality"] = {"min_roc_auc": 0.99, "min_recall": 0.99, "min_precision": 0.99}
     config_path.write_text(yaml.dump(config))

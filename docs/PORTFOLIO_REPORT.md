@@ -112,16 +112,20 @@ mlflow ui --backend-store-uri mlruns
 
 ```
 churn_ml_decision/
-├── config/default.yaml     # Central configuration
+├── .github/workflows/      # CI configuration
+├── config/
+│   └── default.yaml        # Central configuration
 ├── data/
 │   ├── raw/                # Source dataset
 │   └── processed/          # Train/val/test arrays
+├── docs/                   # Documentation
 ├── models/                 # Trained models & artifacts
 ├── notebooks/              # 11 exploratory notebooks
 ├── src/churn_ml_decision/  # Production package
 ├── tests/                  # Unit & integration tests
 ├── dvc.yaml                # DVC pipeline definition
-└── .github/workflows/      # CI configuration
+├── Makefile                # Build automation
+└── pyproject.toml          # Project metadata & dependencies
 ```
 
 ## Limitations

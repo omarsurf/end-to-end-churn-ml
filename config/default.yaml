@@ -53,6 +53,9 @@ artifacts:
   threshold_analysis_file: threshold_analysis_val.csv
   final_results_file: final_test_results.csv
   train_medians_file: train_medians.json
+  train_summary_file: train_summary.json
+  data_quality_report_file: data_quality_report.json
+  drift_reference_file: drift_reference.json
 
 split:
   test_size: 0.20
@@ -117,6 +120,7 @@ registry:
   file: models/registry.json
   use_current: true
   template: "{name}_v{version}.joblib"
+  auto_promote_first_model: true
 
 mlflow:
   enabled: true
@@ -129,3 +133,42 @@ quality:
   min_roc_auc: 0.83
   min_recall: 0.70
   min_precision: 0.50
+
+validation:
+  required_columns:
+    - tenure
+    - MonthlyCharges
+    - TotalCharges
+    - Contract
+    - InternetService
+    - PaymentMethod
+    - Churn
+  target_column: Churn
+  max_missing_ratio: 0.05
+  max_duplicate_ratio: 0.02
+  min_target_rate: 0.05
+  max_target_rate: 0.95
+  max_invalid_rows_ratio: 0.05
+  allow_empty_dataframe: false
+  numeric_ranges:
+    tenure:
+      min: 0
+    MonthlyCharges:
+      min: 0
+    TotalCharges:
+      min: 0
+    SeniorCitizen:
+      min: 0
+      max: 1
+
+logging:
+  level: INFO
+  file: logs/pipeline.log
+  logger_name: churn_ml_decision
+
+monitoring:
+  enabled: true
+  drift_p_value_threshold: 0.05
+  reference_file: models/drift_reference.json
+  drift_report_file: metrics/data_drift_report.json
+  metrics_file: metrics/production_metrics.json

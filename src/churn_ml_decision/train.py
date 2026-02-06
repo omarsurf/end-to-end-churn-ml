@@ -1,24 +1,34 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import json
+import logging
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import joblib
+import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 
-from .config import load_config, project_root, resolve_path
+from .config import (
+    config_hash_from_file,
+    load_typed_config,
+    log_loaded_config,
+    project_root,
+    resolve_path,
+)
 from .io import load_train_val_arrays
+from .logging_config import setup_logging
 from .mlflow_utils import log_artifact, log_metrics, log_model, log_params, set_tag, start_run
-from .registry import update_registry
+from .model_registry import ModelMetadata, ModelRegistry
 from .track import file_sha256, log_run
 
 logger = logging.getLogger(__name__)
 
 
-def build_model(candidate: dict):
+def build_model(candidate: dict[str, Any]):
     """Build a model instance from a candidate config dict."""
     model_type = candidate["type"]
     params = candidate.get("params", {})
@@ -27,7 +37,7 @@ def build_model(candidate: dict):
     if model_type == "xgboost":
         try:
             from xgboost import XGBClassifier
-        except ImportError as exc:
+        except ImportError as exc:  # pragma: no cover - optional dependency
             raise ImportError(
                 "xgboost is not installed. Install with pip install -e '.[ml]'"
             ) from exc
@@ -35,7 +45,7 @@ def build_model(candidate: dict):
     if model_type == "lightgbm":
         try:
             from lightgbm import LGBMClassifier
-        except ImportError as exc:
+        except ImportError as exc:  # pragma: no cover - optional dependency
             raise ImportError(
                 "lightgbm is not installed. Install with pip install -e '.[ml]'"
             ) from exc
@@ -57,154 +67,247 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override model output filename (joblib).",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Reserved strict mode flag for future compatibility.",
+    )
     return parser.parse_args()
 
 
+def _load_feature_names(models_dir: Path) -> list[str]:
+    feature_file = models_dir / "final_feature_names.csv"
+    if not feature_file.exists():
+        return []
+    df = pd.read_csv(feature_file)
+    if "feature_name" not in df.columns:
+        return []
+    return df["feature_name"].astype(str).tolist()
+
+
+def _extract_feature_importance(model: Any, feature_names: list[str]) -> dict[str, float]:
+    if hasattr(model, "coef_"):
+        coefs = model.coef_
+        if getattr(coefs, "ndim", 1) > 1:
+            coefs = coefs[0]
+        values = [abs(float(v)) for v in coefs.tolist()]
+    elif hasattr(model, "feature_importances_"):
+        values = [float(v) for v in model.feature_importances_.tolist()]
+    else:
+        return {}
+
+    if not feature_names:
+        feature_names = [f"feature_{idx}" for idx in range(len(values))]
+    if len(feature_names) != len(values):
+        size = min(len(feature_names), len(values))
+        feature_names = feature_names[:size]
+        values = values[:size]
+    return dict(zip(feature_names, values))
+
+
+def _register_model(
+    *,
+    registry: ModelRegistry,
+    model_path: Path,
+    model_name: str,
+    config_path: Path,
+    metrics: dict[str, float],
+    input_features: list[str],
+    feature_importance: dict[str, float],
+    auto_promote_first_model: bool,
+) -> str:
+    model_id = f"{model_name}-v{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+    metadata = ModelMetadata(
+        model_id=model_id,
+        model_path=str(model_path),
+        config_hash=config_hash_from_file(config_path),
+        metrics=metrics,
+        status="training",
+        input_features=input_features,
+        feature_importance=feature_importance,
+    )
+    registry.register(model_path, metadata)
+
+    if auto_promote_first_model and len(registry.list_models(status="production")) == 0:
+        registry.promote(model_id)
+        logger.info("Auto-promoted first registered model", extra={"model_id": model_id})
+
+    return model_id
+
+
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
     args = parse_args()
-    cfg = load_config(args.config)
     root = project_root()
+    cfg = load_typed_config(args.config)
+    pipeline_logger = setup_logging(
+        log_file=resolve_path(root, cfg.logging.file),
+        level=cfg.logging.level,
+        logger_name=cfg.logging.logger_name,
+    )
+    log_loaded_config(pipeline_logger, cfg, args.config)
 
-    data_dir = resolve_path(root, cfg["paths"]["data_processed"])
-    models_dir = resolve_path(root, cfg["paths"]["models"])
-    models_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        data_dir = resolve_path(root, cfg.paths.data_processed)
+        models_dir = resolve_path(root, cfg.paths.models)
+        models_dir.mkdir(parents=True, exist_ok=True)
 
-    model_file = args.output_model or cfg["artifacts"]["model_file"]
-
-    x_train, y_train, x_val, y_val = load_train_val_arrays(data_dir)
-
-    model_cfg = cfg["model"]
-    candidates = model_cfg.get("candidates") or []
-
-    results = []
-    for candidate in candidates:
-        if not candidate.get("enabled", True):
-            continue
-        name = candidate["name"]
-        logger.info("Training candidate: %s", name)
-        model = build_model(candidate)
-        model.fit(x_train, y_train)
-
-        y_val_proba = model.predict_proba(x_val)[:, 1]
-        y_val_pred = (y_val_proba >= 0.5).astype(int)
-
-        roc_auc = roc_auc_score(y_val, y_val_proba)
-        precision = precision_score(y_val, y_val_pred)
-        recall = recall_score(y_val, y_val_pred)
-        f1 = f1_score(y_val, y_val_pred)
-
-        results.append(
-            {
-                "name": name,
-                "type": candidate["type"],
-                "params": candidate.get("params", {}),
-                "model": model,
-                "roc_auc": roc_auc,
-                "precision": precision,
-                "recall": recall,
-                "f1": f1,
-            }
-        )
-
+        model_file = args.output_model or cfg.artifacts.model_file
+        x_train, y_train, x_val, y_val = load_train_val_arrays(data_dir)
         logger.info(
-            "%s - ROC-AUC: %.4f, Precision: %.4f, Recall: %.4f, F1: %.4f",
-            name,
-            roc_auc,
-            precision,
-            recall,
-            f1,
+            "Train stage started",
+            extra={
+                "train_rows": int(x_train.shape[0]),
+                "val_rows": int(x_val.shape[0]),
+                "features": int(x_train.shape[1]),
+            },
         )
 
-    if not results:
-        raise SystemExit("No enabled model candidates found.")
+        candidates = [c.model_dump(mode="python") for c in cfg.model.candidates]
+        results: list[dict[str, Any]] = []
+        for candidate in candidates:
+            if not candidate.get("enabled", True):
+                continue
+            name = candidate["name"]
+            logger.info("Training candidate", extra={"candidate": name, "type": candidate["type"]})
+            model = build_model(candidate)
+            model.fit(x_train, y_train)
 
-    selection_metric = model_cfg.get("selection_metric", "roc_auc")
-    best = max(results, key=lambda r: r[selection_metric])
+            y_val_proba = model.predict_proba(x_val)[:, 1]
+            y_val_pred = (y_val_proba >= 0.5).astype(int)
 
-    registry_cfg = cfg.get("registry", {})
-    if registry_cfg.get("enabled", False):
-        template = registry_cfg["template"]
-        version = model_cfg.get("version", 1)
-        model_file = template.format(name=best["name"], version=version)
+            roc_auc = float(roc_auc_score(y_val, y_val_proba))
+            precision = float(precision_score(y_val, y_val_pred, zero_division=0))
+            recall = float(recall_score(y_val, y_val_pred, zero_division=0))
+            f1 = float(f1_score(y_val, y_val_pred, zero_division=0))
 
-    joblib.dump(best["model"], models_dir / model_file)
-    logger.info("Saved model: %s", models_dir / model_file)
+            results.append(
+                {
+                    "name": name,
+                    "type": candidate["type"],
+                    "params": candidate.get("params", {}),
+                    "model": model,
+                    "roc_auc": roc_auc,
+                    "precision": precision,
+                    "recall": recall,
+                    "f1": f1,
+                }
+            )
+            logger.info(
+                "Candidate metrics",
+                extra={
+                    "candidate": name,
+                    "roc_auc": roc_auc,
+                    "precision": precision,
+                    "recall": recall,
+                    "f1": f1,
+                },
+            )
 
-    # Always save canonical name for DVC pipeline compatibility
-    canonical = cfg["artifacts"]["model_file"]
-    if model_file != canonical:
-        joblib.dump(best["model"], models_dir / canonical)
-        logger.info("Saved canonical model: %s", models_dir / canonical)
+        if not results:
+            raise SystemExit("No enabled model candidates found.")
 
-    summary = {
-        "model_type": best["name"],
-        "selection_metric": selection_metric,
-        "params": best["params"],
-        "validation_roc_auc": best["roc_auc"],
-        "validation_precision": best["precision"],
-        "validation_recall": best["recall"],
-        "validation_f1": best["f1"],
-    }
-    summary_path = models_dir / "train_summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2))
-    logger.info("Wrote %s", summary_path)
+        selection_metric = cfg.model.selection_metric
+        best = max(results, key=lambda r: r[selection_metric])
 
-    # MLflow tracking
-    with start_run(cfg, run_name=f"train-{best['name']}") as run:
-        if run is not None:
-            set_tag("stage", "train")
-            set_tag("model_type", best["name"])
-            log_params(best["params"])
-            log_params({"selection_metric": selection_metric})
-            log_metrics({
-                "val_roc_auc": best["roc_auc"],
-                "val_precision": best["precision"],
-                "val_recall": best["recall"],
-                "val_f1": best["f1"],
-            })
-            log_artifact(str(summary_path))
-            log_model(best["model"], artifact_path="model", cfg=cfg)
-            logger.info("Logged training run to MLflow (run_id=%s)", run.info.run_id)
+        if cfg.registry.enabled:
+            model_file = cfg.registry.template.format(name=best["name"], version=cfg.model.version)
 
-    # JSONL experiment tracking
-    tracking_cfg = cfg.get("tracking", {})
-    if tracking_cfg.get("enabled", False):
-        raw_path = resolve_path(root, cfg["paths"]["data_raw"])
-        payload = {
-            "stage": "train",
-            "model": best["name"],
+        model_path = models_dir / model_file
+        joblib.dump(best["model"], model_path)
+        logger.info("Saved selected model", extra={"model_path": str(model_path)})
+
+        # Canonical file for backward compatibility with DVC/tests.
+        canonical_path = models_dir / cfg.artifacts.model_file
+        if canonical_path != model_path:
+            joblib.dump(best["model"], canonical_path)
+            logger.info(
+                "Saved canonical model alias", extra={"canonical_path": str(canonical_path)}
+            )
+
+        summary = {
+            "model_type": best["name"],
+            "selection_metric": selection_metric,
             "params": best["params"],
-            "metrics": {
-                "validation_roc_auc": best["roc_auc"],
-                "validation_precision": best["precision"],
-                "validation_recall": best["recall"],
-                "validation_f1": best["f1"],
-            },
-            "artifacts": {"model": str(models_dir / model_file)},
-            "data_hash": file_sha256(raw_path) if raw_path.exists() else None,
-            "config_path": str(args.config),
+            "validation_roc_auc": best["roc_auc"],
+            "validation_precision": best["precision"],
+            "validation_recall": best["recall"],
+            "validation_f1": best["f1"],
         }
-        log_run(resolve_path(root, tracking_cfg["file"]), payload)
-        logger.info("Logged train run to %s", tracking_cfg["file"])
+        summary_path = models_dir / cfg.artifacts.train_summary_file
+        summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
-    if registry_cfg.get("enabled", False):
-        registry_path = resolve_path(root, registry_cfg["file"])
-        update_registry(
-            registry_path,
-            {
-                "model_name": best["name"],
-                "model_path": str(models_dir / model_file),
-                "metrics": {
+        registered_model_id = None
+        if cfg.registry.enabled:
+            registry = ModelRegistry(resolve_path(root, cfg.registry.file))
+            input_features = _load_feature_names(models_dir)
+            feature_importance = _extract_feature_importance(best["model"], input_features)
+            registered_model_id = _register_model(
+                registry=registry,
+                model_path=model_path,
+                model_name=best["name"],
+                config_path=args.config,
+                metrics={
                     "roc_auc": best["roc_auc"],
                     "precision": best["precision"],
                     "recall": best["recall"],
                     "f1": best["f1"],
                 },
+                input_features=input_features,
+                feature_importance=feature_importance,
+                auto_promote_first_model=cfg.registry.auto_promote_first_model,
+            )
+            logger.info("Model registered", extra={"model_id": registered_model_id})
+
+        with start_run(cfg.model_dump(mode="python"), run_name=f"train-{best['name']}") as run:
+            if run is not None:
+                set_tag("stage", "train")
+                set_tag("model_type", best["name"])
+                if registered_model_id:
+                    set_tag("model_id", registered_model_id)
+                log_params(best["params"])
+                log_params({"selection_metric": selection_metric})
+                log_metrics(
+                    {
+                        "val_roc_auc": best["roc_auc"],
+                        "val_precision": best["precision"],
+                        "val_recall": best["recall"],
+                        "val_f1": best["f1"],
+                    }
+                )
+                log_artifact(str(summary_path))
+                log_model(best["model"], artifact_path="model", cfg=cfg.model_dump(mode="python"))
+                logger.info("Logged training run to MLflow", extra={"run_id": run.info.run_id})
+
+        if cfg.tracking.enabled:
+            raw_path = resolve_path(root, cfg.paths.data_raw)
+            payload = {
+                "stage": "train",
+                "model": best["name"],
+                "model_id": registered_model_id,
                 "params": best["params"],
+                "metrics": {
+                    "validation_roc_auc": best["roc_auc"],
+                    "validation_precision": best["precision"],
+                    "validation_recall": best["recall"],
+                    "validation_f1": best["f1"],
+                },
+                "artifacts": {"model": str(model_path)},
+                "data_hash": file_sha256(raw_path) if raw_path.exists() else None,
+                "config_path": str(args.config),
+            }
+            log_run(resolve_path(root, cfg.tracking.file), payload)
+
+        logger.info(
+            "Train stage finished",
+            extra={
+                "selected_model": best["name"],
+                "selection_metric": selection_metric,
+                "registered_model_id": registered_model_id,
             },
         )
-        logger.info("Updated registry at %s", registry_cfg["file"])
+    except Exception:
+        logger.exception("Train stage failed")
+        raise
 
 
 if __name__ == "__main__":

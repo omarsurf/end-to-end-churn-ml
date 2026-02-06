@@ -17,6 +17,8 @@ dependencies = [
   "joblib",
   "scipy",
   "pyyaml",
+  "pydantic>=2,<3",
+  "tenacity",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +31,12 @@ churn-prepare = "churn_ml_decision.prepare:main"
 churn-train = "churn_ml_decision.train:main"
 churn-evaluate = "churn_ml_decision.evaluate:main"
 churn-predict = "churn_ml_decision.predict:main"
+churn-validate-config = "churn_ml_decision.cli:validate_config_main"
+churn-model-info = "churn_ml_decision.cli:model_info_main"
+churn-model-promote = "churn_ml_decision.cli:model_promote_main"
+churn-model-rollback = "churn_ml_decision.cli:model_rollback_main"
+churn-check-drift = "churn_ml_decision.cli:check_drift_main"
+churn-health-check = "churn_ml_decision.cli:health_check_main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -39,6 +47,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100

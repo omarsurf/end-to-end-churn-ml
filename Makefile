@@ -45,7 +45,7 @@ mlflow-ui:
 	mlflow ui --backend-store-uri mlruns
 
 test:
-	pytest
+	python -m pytest
 
 lint:
-	ruff check src tests
+	python -m ruff check src tests

@@ -22,3 +22,5 @@ models/experiments.jsonl
 models/registry.json
 /mlruns/
 .coverage
+logs/
+metrics/

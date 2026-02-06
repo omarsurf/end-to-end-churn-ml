@@ -10,3 +10,5 @@ shap
 xgboost
 lightgbm
 pyyaml
+pydantic
+tenacity

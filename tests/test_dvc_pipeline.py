@@ -1,4 +1,5 @@
 """Validate dvc.yaml pipeline definition is consistent with project structure."""
+
 import pytest
 import yaml
 

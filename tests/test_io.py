@@ -13,6 +13,7 @@ def _save_arrays(data_dir: Path, prefix: str, X: np.ndarray, y: np.ndarray):
 
 # ---------- load_train_val_arrays ----------
 
+
 def test_load_train_val_arrays_ok(tmp_path: Path):
     X = np.array([[1.0, 2.0], [3.0, 4.0]])
     y = np.array([0, 1])
@@ -60,6 +61,7 @@ def test_load_train_val_arrays_nan_in_val(tmp_path: Path):
 
 # ---------- load_val_arrays ----------
 
+
 def test_load_val_arrays_ok(tmp_path: Path):
     _save_arrays(tmp_path, "val", np.ones((4, 3)), np.ones(4))
     x_val, y_val = load_val_arrays(tmp_path)
@@ -79,6 +81,7 @@ def test_load_val_arrays_nan(tmp_path: Path):
 
 
 # ---------- load_test_arrays ----------
+
 
 def test_load_test_arrays_ok(tmp_path: Path):
     _save_arrays(tmp_path, "test", np.ones((5, 2)), np.ones(5))
