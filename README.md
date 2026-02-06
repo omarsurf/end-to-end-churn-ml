@@ -149,7 +149,7 @@ mlflow ui --backend-store-uri mlruns
 ## Portfolio Note
 A full project write-up is available in:
 ```
-docs/PORTFOLIO_REPORT.md
+docs/PROJECT_REPORT.md
 ```
 
 This repository is designed to demonstrate **production-oriented ML engineering**, not just notebook experimentation.
