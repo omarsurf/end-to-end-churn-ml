@@ -1,84 +1,123 @@
-# Churn ML Decision
+# Portfolio Report
 
-[![CI](https://github.com/omarsurf/end-to-end-churn-ml/actions/workflows/ci.yml/badge.svg)](https://github.com/omarsurf/end-to-end-churn-ml/actions/workflows/ci.yml)
+## Overview
 
-This project builds a churn prediction model and turns it into a business decision for retention targeting. The main workflow lives in notebooks, with artifacts saved to `data/processed` and `models`.
+This project builds a **churn prediction model** and turns it into a **business decision** for retention targeting. It includes an end-to-end notebook narrative and a production-ready CLI pipeline with full MLOps capabilities.
 
-**Project Structure**
-- `data/raw`: source dataset (Telco Customer Churn)
-- `data/processed`: prepared splits and numpy arrays
-- `models`: trained models, preprocessors, and evaluation outputs
-- `notebooks`: end-to-end analysis and modeling
-- `src`: production-ready package and CLI tools
-- `config`: YAML configuration for training/evaluation
+## Dataset
 
-**Notebook Flow (Recommended Order)**
-1. `01_business_context.ipynb`
-2. `02_data_audit.ipynb`
-3. `03_data_preparation.ipynb`
-4. `04_EDA.ipynb`
-5. `05_preprocessing.ipynb`
-6. `06_baseline_model.ipynb`
-7. `07_feature_importance._and_interpretation.ipynb`
-8. `08_feature_engineering.ipynb`
-9. `09_hyperparameter_tuning.ipynb`
-10. `10_final_evaluation_and_business_decision.ipynb`
-11. `11_model_improvement.ipynb` (optional, benchmark/experimentation)
+- **Source**: IBM Telco Customer Churn (Kaggle)
+- **Size**: 7,043 rows, 21 columns
+- **Target**: Binary churn prediction (Yes/No)
 
-**Quickstart**
-1. Create a virtual environment and install dependencies:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   pip install -e .
-   ```
-2. Run the notebooks in the order above.
+## Pipeline (Production-Ready)
 
-Optional advanced dependencies:
+The CLI pipeline is config-driven (`config/default.yaml`) and fully reproducible:
+
+| Stage | Command | Description |
+|-------|---------|-------------|
+| **Prepare** | `churn-prepare` | Clean data, split train/val/test, engineer features, build preprocessing pipeline |
+| **Train** | `churn-train` | Train model candidates, select best by validation metric, log to MLflow |
+| **Evaluate** | `churn-evaluate` | Select threshold on validation, evaluate on test, compute business value |
+| **Predict** | `churn-predict` | Batch inference on new data |
+
+## MLOps Stack
+
+| Tool | Purpose | Status |
+|------|---------|--------|
+| **DVC** | Pipeline orchestration & parameter tracking | Enabled |
+| **MLflow** | Experiment tracking, model logging, artifact storage | Enabled |
+| **JSONL Tracking** | Lightweight local experiment logs | Enabled |
+| **Model Registry** | Simple JSON-based model versioning | Enabled |
+| **GitHub Actions** | CI/CD with lint, pipeline, and tests | Active |
+| **Quality Gates** | Configurable min ROC-AUC, recall, precision | Enforced |
+
+### DVC Pipeline
+
 ```bash
-pip install -e ".[ml]"
-```
+dvc repro        # Run full pipeline
+dvc dag          # Visualize pipeline DAG
+dvc params diff  # Compare parameter changes
+MLflow Tracking
 
-**Production CLI (Config-Driven)**
-The default config is `config/default.yaml`.
-```bash
-churn-prepare --config config/default.yaml
-churn-train --config config/default.yaml
-churn-evaluate --config config/default.yaml
-churn-predict --config config/default.yaml --input data/new_customers.csv --output data/predictions.csv
-```
+mlflow ui --backend-store-uri mlruns
+Tracks: model parameters, validation/test metrics, artifacts, and model files.
 
-**Make Targets**
-```bash
-make install
-make prepare
-make train
-make evaluate
-make pipeline
+Modeling Highlights
+Baseline: Interpretable Logistic Regression with L2 regularization
+Candidates: XGBoost, LightGBM (configurable, disabled by default)
+Feature Engineering: 14+ engineered features for non-linear effects and interactions
+Threshold Selection: Recall-constrained precision optimization on validation set
+Model Selection Metric: ROC-AUC (configurable)
+Business Decision Framework
+The evaluation computes expected value (EV) using configurable business assumptions:
+
+Parameter	Default	Description
+clv	$2,000	Customer Lifetime Value
+success_rate	30%	Retention campaign success rate
+contact_cost	$50	Cost per retention contact
+Output metrics:
+
+Net_Value: Total expected profit from retention campaign
+Net_per_Flagged: ROI per customer contacted
+Quality & Testing
+Metric	Value
+Test Coverage	90%
+Linting	ruff (zero warnings)
+CI Pipeline	lint + full pipeline + tests
+Key modules coverage:
+
+prepare.py: 99%
+evaluate.py: 94%
+io.py, track.py, registry.py: 100%
+Latest Results
+See models/final_test_results.csv for the most recent evaluation.
+
+Typical results with default config:
+
+ROC-AUC: ~0.84
+Recall: ~0.78 (at selected threshold)
+Precision: ~0.52
+Quickstart
+
+# Install
+pip install -e ".[dev,ops]"
+
+# Run pipeline
+make pipeline    # or: dvc repro
+
+# Run tests
 make test
-make lint
-```
 
-**Repeatable Evaluation (No Notebook Required)**
-After artifacts exist in `data/processed` and `models`, you can also run:
-```bash
-python src/evaluate.py --min-recall 0.70 --threshold-min 0.20 --threshold-max 0.85 --threshold-step 0.05
-```
+# View experiments
+mlflow ui --backend-store-uri mlruns
+Project Structure
 
-This script will:
-- choose a decision threshold on the validation set
-- evaluate once on the test set
-- write results to `models/threshold_analysis_val.csv`
-- write results to `models/final_test_results.csv`
+churn_ml_decision/
+├── .github/workflows/      # CI configuration
+├── config/
+│   └── default.yaml        # Central configuration
+├── data/
+│   ├── raw/                # Source dataset
+│   └── processed/          # Train/val/test arrays
+├── docs/                   # Documentation
+├── models/                 # Trained models & artifacts
+├── notebooks/              # 11 exploratory notebooks
+├── src/churn_ml_decision/  # Production package
+├── tests/                  # Unit & integration tests
+├── dvc.yaml                # DVC pipeline definition
+├── Makefile                # Build automation
+└── pyproject.toml          # Project metadata & dependencies
 
-**Notes**
-- Advanced notebooks require `xgboost`, `lightgbm`, and `shap`.
-- The CLI pipeline uses a stable Logistic Regression configuration by default (`l2`, `class_weight=balanced`). If you prefer tuned params from notebook 09 (e.g. `l1`/`saga`), update `config/default.yaml`.
-- The final decision threshold should be selected on validation, then tested once on the test set.
-- `data/processed` and intermediate artifacts are not tracked; regenerate them via notebooks or the pipeline.
-- Business value metrics (EV/ROI) are computed during evaluation using `business` config values.
-- Each train/evaluate run logs a record to `models/experiments.jsonl` when tracking is enabled.
-- The current model is recorded in `models/registry.json` when registry is enabled.
-- Dataset source: IBM Telco Customer Churn (Kaggle).
-- Portfolio summary: `docs/PORTFOLIO_REPORT.md`
+Limitations :
+Feature engineering kept minimal for interpretability
+Single-node training (no distributed)
+Local MLflow backend (no remote server)
+
+Future Improvements:
+Add remote MLflow tracking server
+Implement model A/B testing framework
+Add data drift monitoring
+Containerize with Docker for deployment
+Add API endpoint for real-time predictions
+
