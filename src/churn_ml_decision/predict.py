@@ -92,6 +92,14 @@ def _resolve_model_path(
     root: Path, models_dir: Path, cfg, *, allow_unregistered: bool = False
 ) -> tuple[Path, str | None]:
     fallback_path = models_dir / cfg.artifacts.model_file
+    if allow_unregistered:
+        logger.warning(
+            "Scoring with unregistered model (--allow-unregistered). "
+            "This should only be used for dev/test.",
+            extra={"model_path": str(fallback_path), "model_id": None},
+        )
+        return fallback_path, None
+
     if cfg.registry.enabled and cfg.registry.use_current:
         registry = ModelRegistry(resolve_path(root, cfg.registry.file))
         try:
@@ -116,15 +124,6 @@ def _resolve_model_path(
             )
 
         return candidate_path, production.model_id
-
-    # No silent fallback: require explicit opt-in for unregistered models
-    if allow_unregistered:
-        logger.warning(
-            "Scoring with unregistered model (--allow-unregistered). "
-            "This should only be used for dev/test.",
-            extra={"model_path": str(fallback_path), "model_id": None},
-        )
-        return fallback_path, None
 
     if cfg.registry.enabled:
         raise SystemExit(
@@ -236,6 +235,7 @@ def main() -> None:
                         if args.strict:
                             raise DataValidationError(message)
                         failed_rows += len(valid_df)
+                        row_status.loc[valid_df.index] = "failed"
                         logger.warning(
                             "Prepared features missing required preprocessor columns; "
                             "neutral fallback applied.",
@@ -258,6 +258,7 @@ def main() -> None:
                     extra={"error": str(exc)},
                 )
                 failed_rows += len(valid_df)
+                row_status.loc[valid_df.index] = "failed"
 
             if not valid_features.empty:
                 model = load_model_with_retry(model_path)
@@ -286,6 +287,8 @@ def main() -> None:
             cfg.business.retained_value or (cfg.business.clv * cfg.business.success_rate)
         )
         contact_cost = float(cfg.business.contact_cost)
+        # Internal 'pending' markers must not leak to final outputs.
+        row_status = row_status.replace("pending", "failed")
 
         output = pd.DataFrame({
             "churn_probability": proba_all,

@@ -83,6 +83,12 @@ cat models/final_test_results.csv  # check metrics
 churn-check-drift --input data/new.csv
 ```
 
+### MLflow file backend deprecation (February 2026)
+- Current config uses `mlflow.tracking_uri: mlruns` (filesystem backend).
+- This backend is deprecated by MLflow and already emits `FutureWarning` during tests/runs.
+- Recommended action: migrate tracking to a DB backend (for example `sqlite:///mlflow.db`) before February 2026.
+- Update `config/default.yaml` (or `CHURN__MLFLOW__TRACKING_URI`) to avoid future breakage.
+
 ## Model Versioning
 
 ### Artifact Strategy

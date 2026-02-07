@@ -380,6 +380,91 @@ def test_predict_with_engineering_enabled_uses_model_features(
     assert out["decision"].isin(["contact", "no_contact"]).all()
 
 
+def test_predict_non_strict_marks_failed_rows_when_feature_preparation_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    models_dir = tmp_path / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    X = pd.DataFrame(
+        {
+            "MonthlyCharges": [20.0, 50.0, 80.0],
+            "TotalCharges": [20.0, 500.0, 2000.0],
+        }
+    )
+    y = np.array([0, 1, 0])
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("num", Pipeline([("scaler", StandardScaler())]), ["MonthlyCharges", "TotalCharges"])
+        ],
+        remainder="drop",
+    )
+    Xp = preprocessor.fit_transform(X)
+    model = LogisticRegression(max_iter=200)
+    model.fit(Xp, y)
+
+    joblib.dump(preprocessor, models_dir / "preprocessor.joblib")
+    joblib.dump(model, models_dir / "best_model.joblib")
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  models: {models_dir}",
+                "artifacts:",
+                "  preprocessor_file: preprocessor.joblib",
+                "  model_file: best_model.joblib",
+                "  final_results_file: final_test_results.csv",
+                "engineering:",
+                "  enabled: true",
+                "registry:",
+                "  enabled: false",
+                "monitoring:",
+                "  enabled: false",
+            ]
+        )
+    )
+
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame(
+        {
+            "customerID": ["P-1", "P-2"],
+            "MonthlyCharges": [40.0, 90.0],
+            "TotalCharges": [200.0, 3000.0],
+        }
+    ).to_csv(input_path, index=False)
+    output_path = tmp_path / "output.csv"
+
+    def _raise_prepare(*_args, **_kwargs):
+        raise ValueError("simulated feature preparation failure")
+
+    monkeypatch.setattr(
+        "churn_ml_decision.predict._prepare_features_for_prediction",
+        _raise_prepare,
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "churn-predict",
+            "--config",
+            str(cfg),
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--allow-unregistered",
+        ],
+    )
+
+    predict_main()
+
+    out = pd.read_csv(output_path)
+    assert "prediction_status" in out.columns
+    assert set(out["prediction_status"]) == {"failed"}
+    assert out["churn_probability"].isna().all()
+
+
 # =============================================================================
 # Additional tests for helper functions
 # =============================================================================
@@ -444,6 +529,21 @@ def test_resolve_model_path_registry_disabled_with_allow_unregistered(tmp_path: 
     config_path = _make_predict_config(tmp_path, registry_enabled=False)
     cfg = load_typed_config(config_path)
     models_dir = tmp_path / "models"
+
+    path, model_id = _resolve_model_path(tmp_path, models_dir, cfg, allow_unregistered=True)
+
+    assert path == models_dir / "best_model.joblib"
+    assert model_id is None
+
+
+def test_resolve_model_path_registry_enabled_allows_unregistered_override(tmp_path: Path):
+    """Allow-unregistered should bypass production lookup even when registry is enabled."""
+    config_path = _make_predict_config(tmp_path, registry_enabled=True)
+    cfg = load_typed_config(config_path)
+    models_dir = tmp_path / "models"
+
+    # No production model registered.
+    ModelRegistry(models_dir / "registry.json")
 
     path, model_id = _resolve_model_path(tmp_path, models_dir, cfg, allow_unregistered=True)
 
