@@ -41,6 +41,19 @@ class ModelRegistry:
     def __init__(self, path: str | Path):
         self.path = Path(path)
 
+    def _normalize_model_path(self, model_path: str | Path) -> str:
+        path = Path(model_path)
+        if not path.is_absolute():
+            return path.as_posix()
+
+        resolved = path.resolve()
+        # Prefer repository-relative paths when model artifacts live under project root.
+        project_root = self.path.resolve().parent.parent
+        try:
+            return resolved.relative_to(project_root).as_posix()
+        except ValueError:
+            return str(resolved)
+
     def _read_raw(self) -> dict[str, Any]:
         if not self.path.exists():
             return {}
@@ -67,13 +80,15 @@ class ModelRegistry:
         # Backward-compatible migration from legacy structure.
         legacy_runs = raw.get("runs", [])
         current_path = raw.get("current_model_path")
+        if current_path is not None:
+            current_path = self._normalize_model_path(str(current_path))
         models: list[ModelMetadata] = []
         production_id: str | None = None
         now = datetime.now(timezone.utc)
 
         for idx, run in enumerate(legacy_runs):
             model_id = str(run.get("model_id") or f"legacy-model-{idx + 1}")
-            model_path = str(run.get("model_path", ""))
+            model_path = self._normalize_model_path(str(run.get("model_path", "")))
             status: ModelStatus = "validation"
             if current_path and model_path == current_path:
                 status = "production"
@@ -153,10 +168,11 @@ class ModelRegistry:
         raise ModelNotFoundError(f"Model '{model_id}' not found in registry.")
 
     def get_model_by_path(self, model_path: str | Path) -> ModelMetadata | None:
-        model_path = str(model_path)
+        raw_model_path = str(model_path)
+        normalized_model_path = self._normalize_model_path(model_path)
         doc = self._load()
         for model in doc.models:
-            if model.model_path == model_path:
+            if model.model_path in {raw_model_path, normalized_model_path}:
                 return model
         return None
 
@@ -176,7 +192,7 @@ class ModelRegistry:
         doc = self._load()
         if any(m.model_id == metadata.model_id for m in doc.models):
             raise ValueError(f"Model id '{metadata.model_id}' already exists in registry.")
-        metadata.model_path = str(model_path)
+        metadata.model_path = self._normalize_model_path(model_path)
         doc.models.append(metadata)
         doc.updated_at = datetime.now(timezone.utc)
         self._save(doc)

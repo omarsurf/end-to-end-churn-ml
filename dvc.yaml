@@ -12,6 +12,11 @@ stages:
       - data/processed/y_train.npy
       - data/processed/y_val.npy
       - data/processed/y_test.npy
+      - models/preprocessor.joblib
+      - models/train_medians.json
+      - models/final_feature_names.csv
+      - models/data_quality_report.json
+      - models/drift_reference.json
     params:
       - config/default.yaml:
           - split

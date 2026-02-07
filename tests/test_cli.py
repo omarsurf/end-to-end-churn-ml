@@ -283,6 +283,8 @@ def test_check_drift_main_success(cli_setup: tuple[Path, Path], capsys: pytest.C
     output = json.loads(captured.out)
     assert "columns" in output
     assert "drift_score" in output
+    metrics_payload = json.loads((tmp_path / "metrics" / "production_metrics.json").read_text())
+    assert metrics_payload["last_drift_score"] == pytest.approx(output["drift_score"])
 
 
 def test_check_drift_main_no_reference(cli_setup: tuple[Path, Path]):
@@ -298,6 +300,44 @@ def test_check_drift_main_no_reference(cli_setup: tuple[Path, Path]):
         with pytest.raises(SystemExit) as exc_info:
             check_drift_main()
         assert "Drift reference not found" in str(exc_info.value)
+
+
+def test_check_drift_main_engineers_raw_input_when_reference_is_engineered(
+    cli_setup: tuple[Path, Path], capsys: pytest.CaptureFixture
+):
+    tmp_path, config_path = cli_setup
+
+    # Drift reference built on engineered feature space.
+    ref_data = pd.DataFrame(
+        {
+            "avg_monthly_spend": [55.0, 60.0, 65.0, 70.0, 75.0],
+            "charge_tenure_ratio": [4.5, 5.0, 5.5, 6.0, 6.5],
+        }
+    )
+    detector = DataDriftDetector()
+    detector.fit(ref_data)
+    detector.save(tmp_path / "models" / "drift_reference.json")
+
+    # Raw batch (no engineered columns).
+    input_path = tmp_path / "input.csv"
+    pd.DataFrame(
+        {
+            "tenure": [10, 20, 30],
+            "MonthlyCharges": [60.0, 80.0, 90.0],
+            "TotalCharges": [600.0, 1600.0, 2700.0],
+        }
+    ).to_csv(input_path, index=False)
+
+    with patch(
+        "sys.argv",
+        ["check-drift", "--input", str(input_path), "--config", str(config_path)],
+    ):
+        check_drift_main()
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert output["columns"]["avg_monthly_spend"]["status"] != "MISSING_IN_NEW_DATA"
+    assert output["columns"]["charge_tenure_ratio"]["status"] != "MISSING_IN_NEW_DATA"
 
 
 # =============================================================================

@@ -105,18 +105,40 @@ def _extract_feature_importance(model: Any, feature_names: list[str]) -> dict[st
     return dict(zip(feature_names, values))
 
 
+def _build_registry_model_file(
+    template: str,
+    *,
+    model_name: str,
+    version: int,
+    timestamp: str,
+) -> str:
+    has_timestamp_placeholder = "{timestamp}" in template
+    rendered = template.format(name=model_name, version=version, timestamp=timestamp)
+    if has_timestamp_placeholder:
+        return rendered
+
+    rendered_path = Path(rendered)
+    if rendered_path.suffix:
+        unique_name = f"{rendered_path.stem}_{timestamp}{rendered_path.suffix}"
+    else:
+        unique_name = f"{rendered_path.name}_{timestamp}"
+
+    if str(rendered_path.parent) in {"", "."}:
+        return unique_name
+    return str(rendered_path.parent / unique_name)
+
+
 def _register_model(
     *,
     registry: ModelRegistry,
     model_path: Path,
-    model_name: str,
+    model_id: str,
     config_path: Path,
     metrics: dict[str, float],
     input_features: list[str],
     feature_importance: dict[str, float],
     auto_promote_first_model: bool,
 ) -> str:
-    model_id = f"{model_name}-v{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     metadata = ModelMetadata(
         model_id=model_id,
         model_path=str(model_path),
@@ -208,9 +230,20 @@ def main() -> None:
 
         selection_metric = cfg.model.selection_metric
         best = max(results, key=lambda r: r[selection_metric])
+        run_timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        generated_model_id = f"{best['name']}-v{run_timestamp}"
 
         if cfg.registry.enabled:
-            model_file = cfg.registry.template.format(name=best["name"], version=cfg.model.version)
+            model_template = args.output_model or cfg.registry.template
+            model_file = _build_registry_model_file(
+                model_template,
+                model_name=best["name"],
+                version=cfg.model.version,
+                timestamp=run_timestamp,
+            )
+        else:
+            # Enforce timestamp even without registry to prevent overwrite
+            model_file = args.output_model or f"{best['name']}_v{cfg.model.version}_{run_timestamp}.joblib"
 
         model_path = models_dir / model_file
         joblib.dump(best["model"], model_path)
@@ -244,7 +277,7 @@ def main() -> None:
             registered_model_id = _register_model(
                 registry=registry,
                 model_path=model_path,
-                model_name=best["name"],
+                model_id=generated_model_id,
                 config_path=args.config,
                 metrics={
                     "roc_auc": best["roc_auc"],

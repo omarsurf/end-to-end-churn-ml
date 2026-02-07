@@ -1,4 +1,5 @@
 import json
+from datetime import datetime as real_datetime, timedelta, timezone as real_timezone
 from pathlib import Path
 
 import numpy as np
@@ -6,6 +7,7 @@ import pytest
 from sklearn.linear_model import LogisticRegression
 
 from churn_ml_decision.train import (
+    _build_registry_model_file,
     _extract_feature_importance,
     _load_feature_names,
     build_model,
@@ -302,3 +304,89 @@ def test_extract_feature_importance_no_attr():
     importance = _extract_feature_importance(model, ["f1"])
 
     assert importance == {}
+
+
+def test_build_registry_model_file_appends_timestamp_when_missing():
+    file_name = _build_registry_model_file(
+        "{name}_v{version}.joblib",
+        model_name="logistic_regression",
+        version=1,
+        timestamp="20260207030000",
+    )
+    assert file_name == "logistic_regression_v1_20260207030000.joblib"
+
+
+def test_build_registry_model_file_respects_timestamp_placeholder():
+    file_name = _build_registry_model_file(
+        "models/{name}_v{version}_{timestamp}.joblib",
+        model_name="logistic_regression",
+        version=2,
+        timestamp="20260207030100",
+    )
+    assert file_name == "models/logistic_regression_v2_20260207030100.joblib"
+
+
+def test_train_registry_creates_immutable_model_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    data_dir, models_dir = _make_synthetic_data(tmp_path)
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        "\n".join(
+            [
+                "paths:",
+                f"  data_raw: {tmp_path / 'data' / 'raw'}",
+                f"  data_processed: {data_dir}",
+                f"  models: {models_dir}",
+                "model:",
+                "  name: logistic_regression",
+                "  version: 1",
+                "  selection_metric: roc_auc",
+                "  candidates:",
+                "    - name: logistic_regression",
+                "      type: logistic_regression",
+                "      enabled: true",
+                "      params:",
+                "        C: 1.0",
+                "        solver: liblinear",
+                "artifacts:",
+                "  model_file: best_model.joblib",
+                "tracking:",
+                "  enabled: false",
+                "registry:",
+                "  enabled: true",
+                f"  file: {models_dir / 'registry.json'}",
+                "  template: '{name}_v{version}.joblib'",
+                "  auto_promote_first_model: true",
+            ]
+        )
+    )
+
+    class FakeDatetime:
+        calls = 0
+
+        @classmethod
+        def now(cls, tz=None):
+            base = real_datetime(2026, 2, 7, 3, 0, 0, tzinfo=real_timezone.utc)
+            value = base + timedelta(seconds=cls.calls)
+            cls.calls += 1
+            if tz is not None:
+                return value.astimezone(tz)
+            return value
+
+    monkeypatch.setattr("churn_ml_decision.train.datetime", FakeDatetime)
+
+    monkeypatch.setattr("sys.argv", ["churn-train", "--config", str(cfg_path)])
+    train_main()
+    monkeypatch.setattr("sys.argv", ["churn-train", "--config", str(cfg_path)])
+    train_main()
+
+    versioned_models = sorted(models_dir.glob("logistic_regression_v1_*.joblib"))
+    assert len(versioned_models) == 2
+    assert versioned_models[0].name != versioned_models[1].name
+    assert (models_dir / "best_model.joblib").exists()
+
+    registry = json.loads((models_dir / "registry.json").read_text())
+    run_paths = [run["model_path"] for run in registry["runs"]]
+    assert len(run_paths) == 2
+    assert run_paths[0] != run_paths[1]

@@ -46,7 +46,7 @@ end-to-end-churn-ml/
 4. `04_EDA.ipynb`
 5. `05_preprocessing.ipynb`
 6. `06_baseline_model.ipynb`
-7. `07_feature_importance_and_interpretation.ipynb`
+7. `07_feature_importance._and_interpretation.ipynb`
 8. `08_feature_engineering.ipynb`
 9. `09_hyperparameter_tuning.ipynb`
 10. `10_final_evaluation_and_business_decision.ipynb`
@@ -91,7 +91,7 @@ churn-predict  --config config/default.yaml \
 - **Baseline**: Logistic Regression (interpretable, class_weight=balanced)
 - **Optional candidates**: XGBoost, LightGBM (disabled by default)
 - **Feature engineering**: Non-linear transformations & interactions
-- **Threshold selection**: Recall-constrained optimization on validation
+- **Threshold selection**: Maximize `Net_Value` on validation with recall/precision constraints
 - **Final evaluation**: Single pass on test set (no leakage)
 
 ---

@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_threshold(results_path: Path) -> float | None:
+def load_threshold(results_path: Path, model_id: str | None = None) -> float | None:
     if not results_path.exists():
         return None
     try:
@@ -55,7 +55,22 @@ def load_threshold(results_path: Path) -> float | None:
         return None
     if results.empty or "final_threshold" not in results.columns:
         return None
-    value = results["final_threshold"].iloc[-1]
+
+    selected = results
+    if model_id is not None and "model_id" in results.columns:
+        model_rows = results[results["model_id"].astype(str) == str(model_id)]
+        if not model_rows.empty:
+            selected = model_rows
+        else:
+            logger.warning(
+                "No matching threshold row for active model_id; using latest threshold entry.",
+                extra={
+                    "model_id": model_id,
+                    "results_rows": int(len(results)),
+                },
+            )
+
+    value = selected["final_threshold"].iloc[-1]
     if pd.isna(value):
         return None
     return float(value)
@@ -96,6 +111,30 @@ def _resolve_model_path(root: Path, models_dir: Path, cfg) -> tuple[Path, str | 
 
         for source, candidate_path, candidate_id in candidates:
             if candidate_path.exists():
+                if candidate_path.is_absolute():
+                    try:
+                        candidate_path.resolve().relative_to(root.resolve())
+                    except ValueError:
+                        if fallback_path.exists():
+                            logger.warning(
+                                "Registry model path is external to project; using canonical fallback model.",
+                                extra={
+                                    "source": source,
+                                    "model_id": candidate_id,
+                                    "model_path": str(candidate_path),
+                                    "fallback_model_path": str(fallback_path),
+                                },
+                            )
+                            return fallback_path, candidate_id
+                        logger.warning(
+                            "Registry model path is external to project; skipping candidate.",
+                            extra={
+                                "source": source,
+                                "model_id": candidate_id,
+                                "model_path": str(candidate_path),
+                            },
+                        )
+                        continue
                 return candidate_path, candidate_id
             logger.warning(
                 "Registry model artifact missing; trying fallback.",
@@ -235,11 +274,14 @@ def main() -> None:
                     logger.exception("Prediction failed; using neutral probability fallback.")
                     proba_all.loc[valid_features.index] = 0.5
 
+        threshold_source = "cli"
         threshold = args.threshold
         if threshold is None:
-            threshold = load_threshold(models_dir / cfg.artifacts.final_results_file)
+            threshold = load_threshold(models_dir / cfg.artifacts.final_results_file, model_id=model_id)
+            threshold_source = "results_file"
         if threshold is None:
             threshold = 0.5
+            threshold_source = "default"
 
         retained_value = float(
             cfg.business.retained_value or (cfg.business.clv * cfg.business.success_rate)
@@ -265,6 +307,7 @@ def main() -> None:
                 "rows": int(len(output)),
                 "failed_rows": int(failed_rows),
                 "threshold": float(threshold),
+                "threshold_source": threshold_source,
                 "model_id": model_id,
             },
         )

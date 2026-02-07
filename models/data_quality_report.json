@@ -1,0 +1,37 @@
+{
+  "passed": true,
+  "rows": 7043,
+  "columns": 21,
+  "critical_issues": [],
+  "warnings": [],
+  "stats": {
+    "missing_ratio_total": 7.43730688356558e-05,
+    "missing_ratio_per_column": {
+      "customerID": 0.0,
+      "gender": 0.0,
+      "SeniorCitizen": 0.0,
+      "Partner": 0.0,
+      "Dependents": 0.0,
+      "tenure": 0.0,
+      "PhoneService": 0.0,
+      "MultipleLines": 0.0,
+      "InternetService": 0.0,
+      "OnlineSecurity": 0.0,
+      "OnlineBackup": 0.0,
+      "DeviceProtection": 0.0,
+      "TechSupport": 0.0,
+      "StreamingTV": 0.0,
+      "StreamingMovies": 0.0,
+      "Contract": 0.0,
+      "PaperlessBilling": 0.0,
+      "PaymentMethod": 0.0,
+      "MonthlyCharges": 0.0,
+      "TotalCharges": 0.001561834445548772,
+      "Churn": 0.0
+    },
+    "duplicate_count": 0,
+    "duplicate_ratio": 0.0,
+    "target_rate": 0.2653698707936959,
+    "invalid_rows_ratio": 0.001561834445548772
+  }
+}

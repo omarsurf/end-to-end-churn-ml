@@ -302,6 +302,98 @@ def test_main_registry_missing_artifact_falls_back_to_canonical(evaluate_artifac
     assert pd.isna(results_df.iloc[0]["model_id"])
 
 
+def test_main_registry_defaults_to_latest_target(evaluate_artifacts, monkeypatch):
+    """Default target should evaluate latest registry model (candidate)."""
+    tmp_path, config_path = evaluate_artifacts
+    monkeypatch.setattr("churn_ml_decision.evaluate.project_root", lambda: tmp_path)
+
+    import joblib
+    import yaml
+
+    config = yaml.safe_load(config_path.read_text())
+    registry_path = tmp_path / "models" / "registry.json"
+    config["registry"] = {"enabled": True, "use_current": True, "file": str(registry_path)}
+    config_path.write_text(yaml.dump(config))
+
+    # Duplicate canonical model into two files to create a clear production/latest split.
+    model = joblib.load(tmp_path / "models" / "best_model.joblib")
+    joblib.dump(model, tmp_path / "models" / "prod.joblib")
+    joblib.dump(model, tmp_path / "models" / "candidate.joblib")
+
+    registry = ModelRegistry(registry_path)
+    registry.register(
+        str(tmp_path / "models" / "prod.joblib"),
+        ModelMetadata(
+            model_id="prod-v1",
+            model_path=str(tmp_path / "models" / "prod.joblib"),
+            config_hash="abc",
+        ),
+    )
+    registry.promote("prod-v1")
+    registry.register(
+        str(tmp_path / "models" / "candidate.joblib"),
+        ModelMetadata(
+            model_id="candidate-v2",
+            model_path=str(tmp_path / "models" / "candidate.joblib"),
+            config_hash="def",
+            status="training",
+        ),
+    )
+
+    with patch("sys.argv", ["evaluate", "--config", str(config_path)]):
+        main()
+
+    results_df = pd.read_csv(tmp_path / "models" / "final_test_results.csv")
+    assert results_df.iloc[0]["model_id"] == "candidate-v2"
+
+
+def test_main_registry_production_target(evaluate_artifacts, monkeypatch):
+    """Explicit --target production should evaluate production model."""
+    tmp_path, config_path = evaluate_artifacts
+    monkeypatch.setattr("churn_ml_decision.evaluate.project_root", lambda: tmp_path)
+
+    import joblib
+    import yaml
+
+    config = yaml.safe_load(config_path.read_text())
+    registry_path = tmp_path / "models" / "registry.json"
+    config["registry"] = {"enabled": True, "use_current": True, "file": str(registry_path)}
+    config_path.write_text(yaml.dump(config))
+
+    model = joblib.load(tmp_path / "models" / "best_model.joblib")
+    joblib.dump(model, tmp_path / "models" / "prod.joblib")
+    joblib.dump(model, tmp_path / "models" / "candidate.joblib")
+
+    registry = ModelRegistry(registry_path)
+    registry.register(
+        str(tmp_path / "models" / "prod.joblib"),
+        ModelMetadata(
+            model_id="prod-v1",
+            model_path=str(tmp_path / "models" / "prod.joblib"),
+            config_hash="abc",
+        ),
+    )
+    registry.promote("prod-v1")
+    registry.register(
+        str(tmp_path / "models" / "candidate.joblib"),
+        ModelMetadata(
+            model_id="candidate-v2",
+            model_path=str(tmp_path / "models" / "candidate.joblib"),
+            config_hash="def",
+            status="training",
+        ),
+    )
+
+    with patch(
+        "sys.argv",
+        ["evaluate", "--config", str(config_path), "--target", "production"],
+    ):
+        main()
+
+    results_df = pd.read_csv(tmp_path / "models" / "final_test_results.csv")
+    assert results_df.iloc[0]["model_id"] == "prod-v1"
+
+
 def test_main_with_mlflow_tracking(evaluate_artifacts, monkeypatch, tmp_path):
     """Test that MLflow tracking works when enabled."""
     artifact_path, config_path = evaluate_artifacts

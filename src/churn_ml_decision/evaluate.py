@@ -107,17 +107,17 @@ def select_threshold(
 
     if candidates.empty:
         idx = df["F1_Score"].idxmax()
-        return df.loc[idx], f"Best F1 (no threshold met {constraint_str})"
+        return df.loc[idx], f"Best F1 on validation (no threshold met {constraint_str})"
 
     if optimize_for == "net_value" and "Net_Value" in candidates.columns:
         idx = candidates["Net_Value"].idxmax()
-        reason = f"Best Net_Value ({constraint_str})"
+        reason = f"Best Net_Value on validation ({constraint_str})"
     elif optimize_for == "precision":
         idx = candidates["Precision"].idxmax()
-        reason = f"Best Precision ({constraint_str})"
+        reason = f"Best Precision on validation ({constraint_str})"
     else:
         idx = candidates["F1_Score"].idxmax()
-        reason = f"Best F1 ({constraint_str})"
+        reason = f"Best F1 on validation ({constraint_str})"
 
     return df.loc[idx], reason
 
@@ -157,19 +157,41 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Reserved strict mode flag for future compatibility.",
     )
+    parser.add_argument(
+        "--target",
+        type=str,
+        choices=("latest", "production", "local"),
+        default="latest",
+        help=(
+            "Model target for evaluation: latest (default, registry candidate), "
+            "production (registry production model), or local (canonical file)."
+        ),
+    )
     return parser.parse_args()
 
 
-def _resolve_model_from_registry(root: Path, registry: ModelRegistry) -> tuple[Path, str | None]:
-    model = None
-    try:
+def _resolve_model_from_registry(
+    root: Path, registry: ModelRegistry, *, target: str
+) -> tuple[Path, str | None]:
+    if target == "production":
         model = registry.get_production_model()
-    except ModelNotFoundError:
+    elif target == "latest":
         model = registry.get_latest_model()
+    else:
+        raise ValueError(f"Unsupported registry target: {target}")
+
     model_path = Path(model.model_path)
     if not model_path.is_absolute():
         model_path = resolve_path(root, model_path)
     return model_path, model.model_id
+
+
+def _is_path_within(root: Path, candidate: Path) -> bool:
+    try:
+        candidate.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
 
 
 def main() -> None:
@@ -209,12 +231,41 @@ def main() -> None:
         x_test, y_test = load_test_arrays(data_dir)
 
         model_path = models_dir / cfg.artifacts.model_file
-        if cfg.registry.enabled and cfg.registry.use_current:
+        target = args.target
+        use_registry = cfg.registry.enabled and cfg.registry.use_current and target != "local"
+
+        if use_registry:
             registry = ModelRegistry(resolve_path(root, cfg.registry.file))
             try:
-                model_path, model_id = _resolve_model_from_registry(root, registry)
+                model_path, model_id = _resolve_model_from_registry(
+                    root, registry, target=target
+                )
             except ModelNotFoundError:
-                logger.warning("No registry model found, falling back to canonical model artifact.")
+                if target == "production":
+                    raise SystemExit(
+                        "No production model found in registry. "
+                        "Use --target latest or --target local."
+                    ) from None
+                logger.warning("No latest registry model found, using canonical model artifact.")
+        elif target != "local":
+            logger.warning(
+                "Registry disabled or bypassed; using canonical model artifact for evaluate target.",
+                extra={"target": target},
+            )
+
+        # Guardrail: avoid coupling to external absolute paths stored in legacy registries.
+        if model_path.is_absolute() and not _is_path_within(root, model_path):
+            fallback_model_path = models_dir / cfg.artifacts.model_file
+            if fallback_model_path.exists():
+                logger.warning(
+                    "Registry model path is external to project; using canonical fallback model.",
+                    extra={
+                        "requested_model_path": str(model_path),
+                        "fallback_model_path": str(fallback_model_path),
+                        "model_id": model_id,
+                    },
+                )
+                model_path = fallback_model_path
 
         if not model_path.exists():
             fallback_model_path = models_dir / cfg.artifacts.model_file
@@ -236,6 +287,7 @@ def main() -> None:
         logger.info(
             "Evaluate stage started",
             extra={
+                "target": target,
                 "model_path": str(model_path),
                 "model_id": model_id,
                 "val_rows": int(len(y_val)),
@@ -295,6 +347,10 @@ def main() -> None:
             "model_type": actual_model_type,
             "model_id": model_id,
             "final_threshold": final_threshold,
+            "selection_min_recall": float(min_recall),
+            "selection_min_precision": float(cfg.evaluation.min_precision),
+            "quality_min_recall": float(cfg.quality.min_recall),
+            "quality_min_precision": float(cfg.quality.min_precision),
             "test_set_size": int(len(y_test)),
             "roc_auc": roc_auc_test,
             "precision": precision,
@@ -326,7 +382,10 @@ def main() -> None:
                     {
                         "final_threshold": final_threshold,
                         "selection_rule": reason,
-                        "min_recall": min_recall,
+                        "selection_min_recall": min_recall,
+                        "selection_min_precision": cfg.evaluation.min_precision,
+                        "quality_min_recall": cfg.quality.min_recall,
+                        "quality_min_precision": cfg.quality.min_precision,
                     }
                 )
                 test_metrics = {
@@ -367,7 +426,18 @@ def main() -> None:
             cfg.quality.model_dump(mode="python"),
         )
         if registry is not None and model_id is not None:
-            status = "validation" if not failures else "deprecated"
+            is_current_production = False
+            try:
+                production_model = registry.get_production_model()
+                is_current_production = production_model.model_id == model_id
+            except ModelNotFoundError:
+                is_current_production = False
+
+            if failures:
+                # Keep active production status to avoid registry-pointer/status divergence.
+                status = "production" if is_current_production else "deprecated"
+            else:
+                status = "production" if is_current_production else "validation"
             registry.update_status(
                 model_id,
                 status=status,

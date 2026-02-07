@@ -43,7 +43,7 @@ model:
 
 evaluation:
   min_recall: 0.70
-  min_precision: 0.50  # Must match quality.min_precision to pass quality gates
+  min_precision: 0.50  # Validation-time threshold selection constraint
   threshold_min: 0.20
   threshold_max: 0.85
   threshold_step: 0.05
@@ -134,7 +134,7 @@ mlflow:
 quality:
   min_roc_auc: 0.83
   min_recall: 0.70
-  min_precision: 0.45  # Slightly lower than evaluation.min_precision to allow for val/test variance
+  min_precision: 0.45
 
 validation:
   required_columns:

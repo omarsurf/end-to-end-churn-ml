@@ -4,7 +4,7 @@
 
 ### Code Quality
 - [ ] `python -m ruff check src tests` passes (zero warnings)
-- [ ] `python -m pytest` passes (89% coverage target)
+- [ ] `python -m pytest` passes (88% coverage target)
 - [ ] `churn-validate-config --config config/default.yaml` succeeds
 
 ### Pipeline Execution
@@ -16,7 +16,7 @@
 Verify `models/final_test_results.csv` meets thresholds:
 - [ ] ROC-AUC ≥ 0.83
 - [ ] Recall ≥ 0.70
-- [ ] Precision ≥ 0.50
+- [ ] Precision ≥ 0.45
 
 ### Registry Status
 - [ ] Model registered in `models/registry.json`
@@ -52,6 +52,7 @@ churn-predict --config config/default.yaml \
 ```bash
 churn-check-drift --config config/default.yaml --input data/new_customers.csv
 ```
+- [ ] Input follows raw scoring schema (the command applies training-consistent feature engineering before drift comparison)
 - [ ] No significant drift detected (p-value > 0.05 for all features)
 - [ ] Or: drift documented and accepted
 

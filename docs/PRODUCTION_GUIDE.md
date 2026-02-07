@@ -22,9 +22,9 @@
 │  • Export drift reference statistics                            │
 │                                                                  │
 │  Outputs:                                                        │
-│  ├── data/processed/X_train.npy, y_train.npy                    │
-│  ├── data/processed/X_val.npy, y_val.npy                        │
-│  ├── data/processed/X_test.npy, y_test.npy                      │
+│  ├── data/processed/X_train_processed.npy, y_train.npy          │
+│  ├── data/processed/X_val_processed.npy, y_val.npy              │
+│  ├── data/processed/X_test_processed.npy, y_test.npy            │
 │  ├── models/preprocessor.joblib                                 │
 │  ├── models/train_medians.json                                  │
 │  ├── models/data_quality_report.json                            │
@@ -54,9 +54,10 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                      churn-evaluate                              │
 │                                                                  │
-│  • Load model from registry                                     │
+│  • Load model target (`--target latest|production|local`)       │
+│    - default: `latest` (most recent registered candidate)       │
 │  • Threshold sweep on validation set                            │
-│  • Select threshold (recall >= min_recall, max precision)       │
+│  • Select threshold (maximize Net_Value under constraints)       │
 │  • Final evaluation on test set                                 │
 │  • Compute business value metrics                               │
 │  • Enforce quality gates                                        │
@@ -144,7 +145,7 @@ business:
 quality:
   min_roc_auc: 0.83
   min_recall: 0.70
-  min_precision: 0.50
+  min_precision: 0.45
 ```
 
 ### Validation
@@ -216,6 +217,18 @@ churn-model-info --config config/default.yaml
 ### Promote New Model
 ```bash
 churn-model-promote --model-id <model_id> --config config/default.yaml
+```
+
+### Evaluate Target Selection
+```bash
+# Default: evaluate latest registered candidate (pre-promotion validation)
+churn-evaluate --config config/default.yaml --target latest
+
+# Evaluate active production model (monitoring/comparison)
+churn-evaluate --config config/default.yaml --target production
+
+# Evaluate local canonical artifact only (bypass registry routing)
+churn-evaluate --config config/default.yaml --target local
 ```
 
 ### Immediate Rollback

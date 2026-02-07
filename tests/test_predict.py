@@ -30,6 +30,34 @@ def test_load_threshold_from_csv(tmp_path: Path):
     assert load_threshold(path) == 0.42
 
 
+def test_load_threshold_prefers_matching_model_id(tmp_path: Path):
+    results = pd.DataFrame(
+        [
+            {"model_id": "model-a", "final_threshold": 0.42},
+            {"model_id": "model-b", "final_threshold": 0.61},
+            {"model_id": "model-a", "final_threshold": 0.55},
+        ]
+    )
+    path = tmp_path / "results.csv"
+    results.to_csv(path, index=False)
+
+    assert load_threshold(path, model_id="model-a") == 0.55
+    assert load_threshold(path, model_id="model-b") == 0.61
+
+
+def test_load_threshold_model_id_fallbacks_to_latest_row(tmp_path: Path):
+    results = pd.DataFrame(
+        [
+            {"model_id": "model-a", "final_threshold": 0.42},
+            {"model_id": "model-b", "final_threshold": 0.61},
+        ]
+    )
+    path = tmp_path / "results.csv"
+    results.to_csv(path, index=False)
+
+    assert load_threshold(path, model_id="unknown-model") == 0.61
+
+
 def test_load_threshold_missing_file(tmp_path: Path):
     assert load_threshold(tmp_path / "nope.csv") is None
 

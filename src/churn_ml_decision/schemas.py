@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from .exceptions import DataValidationError
 
 YES_NO_ALLOWED = {"Yes", "No"}
+YES_NO_OR_NO_INTERNET_ALLOWED = {"Yes", "No", "No internet service"}
+YES_NO_OR_NO_PHONE_ALLOWED = {"Yes", "No", "No phone service"}
 INTERNET_SERVICE_ALLOWED = {"DSL", "Fiber optic", "No"}
 CONTRACT_ALLOWED = {"Month-to-month", "One year", "Two year"}
 PAYMENT_METHOD_ALLOWED = {
@@ -51,17 +53,27 @@ class CustomerInput(BaseModel):
             "Partner",
             "Dependents",
             "PhoneService",
+            "PaperlessBilling",
+        ]
+        internet_dependent_fields = [
             "OnlineSecurity",
             "OnlineBackup",
             "DeviceProtection",
             "TechSupport",
             "StreamingTV",
             "StreamingMovies",
-            "PaperlessBilling",
         ]
         for field in yes_no_fields:
             value = getattr(self, field)
             if value is not None and value not in YES_NO_ALLOWED:
+                raise ValueError(f"Invalid value '{value}' for {field}.")
+
+        if self.MultipleLines is not None and self.MultipleLines not in YES_NO_OR_NO_PHONE_ALLOWED:
+            raise ValueError(f"Invalid value '{self.MultipleLines}' for MultipleLines.")
+
+        for field in internet_dependent_fields:
+            value = getattr(self, field)
+            if value is not None and value not in YES_NO_OR_NO_INTERNET_ALLOWED:
                 raise ValueError(f"Invalid value '{value}' for {field}.")
 
         if (
@@ -82,10 +94,12 @@ class PredictionOutput(BaseModel):
     decision: Literal["contact", "no_contact"]
     expected_value: float
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    threshold: float = Field(default=0.5, ge=0, le=1)
+    threshold: float | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="after")
     def validate_coherence(self) -> "PredictionOutput":
+        if self.threshold is None:
+            return self
         should_contact = self.churn_probability >= self.threshold
         if should_contact and self.decision != "contact":
             raise ValueError("Decision must be 'contact' when probability >= threshold.")
@@ -140,7 +154,7 @@ def validate_batch_input(
 def validate_prediction_outputs(
     df: pd.DataFrame,
     *,
-    threshold: float = 0.5,
+    threshold: float | None = None,
     strict: bool = True,
 ) -> list[str]:
     """Validate prediction outputs before writing downstream artifacts."""
@@ -162,12 +176,13 @@ def validate_prediction_outputs(
         invalid_decision = int((~df["decision"].isin(["contact", "no_contact"])).sum())
         if invalid_decision > 0:
             issues.append(f"{invalid_decision} rows have invalid decision values.")
-        expected_decision = (
-            df["churn_probability"].ge(threshold).map({True: "contact", False: "no_contact"})
-        )
-        mismatches = int((df["decision"] != expected_decision).sum())
-        if mismatches > 0:
-            issues.append(f"{mismatches} rows have inconsistent decision vs probability.")
+        if threshold is not None:
+            expected_decision = (
+                df["churn_probability"].ge(threshold).map({True: "contact", False: "no_contact"})
+            )
+            mismatches = int((df["decision"] != expected_decision).sum())
+            if mismatches > 0:
+                issues.append(f"{mismatches} rows have inconsistent decision vs probability.")
 
     if strict and issues:
         raise DataValidationError(f"Prediction output validation failed: {issues}")

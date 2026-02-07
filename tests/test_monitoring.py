@@ -25,3 +25,14 @@ def test_metrics_tracker_updates_file(tmp_path: Path):
     assert payload["predictions_total"] == 10
     assert payload["prediction_failures"] == 2
     assert (tmp_path / "metrics.json").exists()
+
+
+def test_metrics_tracker_updates_drift_score_without_prediction_counters(tmp_path: Path):
+    tracker = ProductionMetricsTracker(tmp_path / "metrics.json")
+    tracker.update_prediction_metrics(batch_size=10, failed_rows=1, latency_ms=100.0)
+    payload = tracker.update_drift_metrics(drift_score=0.42)
+
+    assert payload["last_drift_score"] == 0.42
+    assert payload["prediction_batches"] == 1
+    assert payload["predictions_total"] == 10
+    assert payload["prediction_failures"] == 1

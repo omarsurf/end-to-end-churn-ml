@@ -36,11 +36,13 @@ class DataDriftDetector:
         for col, reference_values in self.reference_samples.items():
             if col not in new_data.columns:
                 report["columns"][col] = {"status": "MISSING_IN_NEW_DATA"}
+                report["drift_detected"] = True
                 continue
 
             current = pd.to_numeric(new_data[col], errors="coerce").dropna().astype(float)
             if current.empty:
                 report["columns"][col] = {"status": "NO_VALID_VALUES"}
+                report["drift_detected"] = True
                 continue
 
             stat, p_value = ks_2samp(reference_values, current.tolist())
@@ -136,5 +138,13 @@ class ProductionMetricsTracker:
             }
         )
         metrics["history"] = metrics["history"][-200:]
+        self.save(metrics)
+        return metrics
+
+    def update_drift_metrics(self, *, drift_score: float) -> dict[str, Any]:
+        """Persist latest drift score without mutating prediction counters."""
+        metrics = self.load()
+        metrics["last_drift_score"] = float(drift_score)
+        metrics["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.save(metrics)
         return metrics

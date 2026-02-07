@@ -65,6 +65,10 @@ def validate_raw_data(
     """
     validation_cfg = _normalize_config(config)
     numeric_features, categorical_features = _extract_feature_groups(config)
+    quality_df = df.copy()
+    object_cols = quality_df.select_dtypes(include=["object"]).columns
+    if len(object_cols) > 0:
+        quality_df[object_cols] = quality_df[object_cols].replace(r"^\s*$", np.nan, regex=True)
 
     report: dict[str, Any] = {
         "passed": True,
@@ -83,11 +87,11 @@ def validate_raw_data(
     if missing_cols:
         critical.append(f"Missing required columns: {missing_cols}")
 
-    total_cells = max(df.shape[0] * max(df.shape[1], 1), 1)
-    total_missing_ratio = float(df.isna().sum().sum() / total_cells)
+    total_cells = max(quality_df.shape[0] * max(quality_df.shape[1], 1), 1)
+    total_missing_ratio = float(quality_df.isna().sum().sum() / total_cells)
     report["stats"]["missing_ratio_total"] = total_missing_ratio
     report["stats"]["missing_ratio_per_column"] = {
-        col: float(value) for col, value in df.isna().mean().to_dict().items()
+        col: float(value) for col, value in quality_df.isna().mean().to_dict().items()
     }
     if total_missing_ratio > validation_cfg.max_missing_ratio:
         critical.append(
@@ -95,8 +99,8 @@ def validate_raw_data(
             f"{validation_cfg.max_missing_ratio:.4f}."
         )
 
-    duplicate_ratio = float(df.duplicated().mean()) if len(df) > 0 else 0.0
-    duplicate_count = int(df.duplicated().sum()) if len(df) > 0 else 0
+    duplicate_ratio = float(quality_df.duplicated().mean()) if len(quality_df) > 0 else 0.0
+    duplicate_count = int(quality_df.duplicated().sum()) if len(quality_df) > 0 else 0
     report["stats"]["duplicate_count"] = duplicate_count
     report["stats"]["duplicate_ratio"] = duplicate_ratio
     if duplicate_ratio > validation_cfg.max_duplicate_ratio:
@@ -171,7 +175,7 @@ def validate_raw_data(
 
     existing_required = [col for col in validation_cfg.required_columns if col in df.columns]
     if existing_required:
-        invalid_rows_ratio = float(df[existing_required].isna().any(axis=1).mean())
+        invalid_rows_ratio = float(quality_df[existing_required].isna().any(axis=1).mean())
         report["stats"]["invalid_rows_ratio"] = invalid_rows_ratio
         if invalid_rows_ratio > validation_cfg.max_invalid_rows_ratio:
             critical.append(
