@@ -255,7 +255,10 @@ def _save_drift_reference(
         logger.warning("Skipping drift reference export: no numeric features available.")
         return
 
-    detector = DataDriftDetector(p_value_threshold=cfg.monitoring.drift_p_value_threshold)
+    detector = DataDriftDetector(
+        p_value_threshold=cfg.monitoring.drift_p_value_threshold,
+        max_reference_samples=cfg.monitoring.max_reference_samples,
+    )
     detector.fit(x_train[numeric_cols])
     detector.save(models_dir / cfg.artifacts.drift_reference_file)
     logger.info(

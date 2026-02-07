@@ -20,7 +20,8 @@ models/feature_config*.joblib
 models/train_medians.joblib
 models/train_medians.json
 models/experiments.jsonl
-models/registry.json
+# Note: registry.json is tracked in git (source of truth for model versions)
+# See docs/PRODUCTION_GUIDE.md for release workflow
 /mlruns/
 .coverage
 logs/

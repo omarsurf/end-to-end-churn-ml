@@ -72,6 +72,22 @@ def test_threshold_analysis_high_threshold_zero_flagged():
     assert row["Net_per_Flagged"] == 0.0
 
 
+def test_threshold_analysis_single_class_target_is_handled():
+    """Confusion values should be stable even if y_true contains one class only."""
+    y_true = np.array([0, 0, 0, 0])
+    y_proba = np.array([0.2, 0.7, 0.1, 0.9])
+    thresholds = np.array([0.5])
+
+    df = threshold_analysis(y_true, y_proba, thresholds)
+
+    row = df.iloc[0]
+    assert row["True_Negatives"] == 2
+    assert row["False_Positives"] == 2
+    assert row["False_Negatives"] == 0
+    assert row["True_Positives"] == 0
+    assert row["Total_Flagged"] == 2
+
+
 def test_quality_gates_all_pass():
     quality = {"min_roc_auc": 0.83, "min_recall": 0.70, "min_precision": 0.50}
     failures = check_quality_gates(roc_auc=0.88, recall=0.75, precision=0.55, quality=quality)

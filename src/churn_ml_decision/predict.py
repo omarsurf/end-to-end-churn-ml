@@ -203,7 +203,7 @@ def main() -> None:
             input_df.drop(columns=["customerID"]) if "customerID" in input_df.columns else input_df
         )
 
-        required_columns = _prediction_required_columns(cfg)
+        required_columns = _prediction_required_columns(cfg) if args.strict else []
 
         valid_df, issues = validate_batch_input(
             features_df,
@@ -215,8 +215,12 @@ def main() -> None:
             failed_rows += input_rows if has_batch_issue else len(issues)
             logger.warning("Input validation issues detected", extra={"issues_count": len(issues)})
 
-        proba_all = pd.Series(0.5, index=features_df.index, dtype=float)
+        # Track which rows failed validation/prediction for transparency
+        row_status = pd.Series("failed", index=features_df.index, dtype=str)
+        proba_all = pd.Series(float("nan"), index=features_df.index, dtype=float)
         if not valid_df.empty:
+            # Mark validated rows as pending prediction
+            row_status.loc[valid_df.index] = "pending"
             valid_features = pd.DataFrame()
             try:
                 prepared_features = _prepare_features_for_prediction(valid_df, cfg, models_dir)
@@ -242,8 +246,10 @@ def main() -> None:
                         )
                     else:
                         valid_features = prepared_features.loc[:, model_required_columns]
+                        row_status.loc[valid_features.index] = "pending"
                 else:
                     valid_features = prepared_features
+                    row_status.loc[valid_features.index] = "pending"
             except Exception as exc:
                 if args.strict:
                     raise
@@ -259,12 +265,13 @@ def main() -> None:
                     transformed = preprocessor.transform(valid_features)
                     proba = model.predict_proba(transformed)[:, 1]
                     proba_all.loc[valid_features.index] = proba
+                    row_status.loc[valid_features.index] = "ok"
                 except Exception:
                     if args.strict:
                         raise
                     failed_rows += len(valid_features)
-                    logger.exception("Prediction failed; using neutral probability fallback.")
-                    proba_all.loc[valid_features.index] = 0.5
+                    row_status.loc[valid_features.index] = "failed"
+                    logger.exception("Prediction failed; rows marked as failed.")
 
         threshold_source = "cli"
         threshold = args.threshold
@@ -280,15 +287,40 @@ def main() -> None:
         )
         contact_cost = float(cfg.business.contact_cost)
 
-        output = pd.DataFrame({"churn_probability": proba_all.astype(float)})
-        output["churn_prediction"] = output["churn_probability"].ge(threshold).astype(int)
-        output["decision"] = output["churn_prediction"].map({1: "contact", 0: "no_contact"})
-        output["expected_value"] = output["churn_probability"] * retained_value - contact_cost
+        output = pd.DataFrame({
+            "churn_probability": proba_all,
+            "prediction_status": row_status,
+        })
+        # Only compute decisions for successfully predicted rows
+        output["churn_prediction"] = pd.NA
+        output["decision"] = pd.NA
+        output["expected_value"] = pd.NA
+
+        ok_mask = output["prediction_status"] == "ok"
+        if ok_mask.any():
+            output.loc[ok_mask, "churn_prediction"] = (
+                output.loc[ok_mask, "churn_probability"].ge(threshold).astype(int)
+            )
+            output.loc[ok_mask, "decision"] = output.loc[ok_mask, "churn_prediction"].map(
+                {1: "contact", 0: "no_contact"}
+            )
+            output.loc[ok_mask, "expected_value"] = (
+                output.loc[ok_mask, "churn_probability"] * retained_value - contact_cost
+            )
         output["model_id"] = model_id
         if customer_ids is not None:
             output.insert(0, "customerID", customer_ids)
 
-        validate_prediction_outputs(output, threshold=threshold, strict=True)
+        output_issues = validate_prediction_outputs(
+            output,
+            threshold=threshold,
+            strict=args.strict,
+        )
+        if output_issues:
+            logger.warning(
+                "Prediction output validation issues detected",
+                extra={"issues": output_issues},
+            )
 
         args.output.parent.mkdir(parents=True, exist_ok=True)
         output.to_csv(args.output, index=False)

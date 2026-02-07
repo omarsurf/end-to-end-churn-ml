@@ -261,6 +261,7 @@ class LoggingSettings(StrictBaseModel):
 class MonitoringConfig(StrictBaseModel):
     enabled: bool = True
     drift_p_value_threshold: float = Field(default=0.05, gt=0.0, lt=1.0)
+    max_reference_samples: int | None = Field(default=2000, ge=1)
     reference_file: str = "models/drift_reference.json"
     drift_report_file: str = "metrics/data_drift_report.json"
     metrics_file: str = "metrics/production_metrics.json"

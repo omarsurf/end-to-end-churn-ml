@@ -1,14 +1,15 @@
-# Core dependencies only. For MLflow/DVC, install with: pip install -e ".[ops]"
+# Core runtime dependencies (aligned with pyproject.toml).
+# For optional stacks:
+# - ML models: pip install -e ".[ml]"
+# - MLOps stack: pip install -e ".[ops]"
+# - Dev tools: pip install -e ".[dev]"
 numpy
 pandas
-scikit-learn
+scikit-learn>=1.2,<2
 matplotlib
 seaborn
 joblib
 scipy
-shap
-xgboost
-lightgbm
 pyyaml
-pydantic
+pydantic>=2,<3
 tenacity

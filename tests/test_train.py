@@ -6,10 +6,12 @@ import numpy as np
 import pytest
 from sklearn.linear_model import LogisticRegression
 
+import churn_ml_decision.train as train_module
 from churn_ml_decision.train import (
     _build_registry_model_file,
     _extract_feature_importance,
     _load_feature_names,
+    _normalize_logistic_params,
     build_model,
     main as train_main,
 )
@@ -27,6 +29,23 @@ def test_build_model_default_params():
     candidate = {"type": "logistic_regression"}
     model = build_model(candidate)
     assert isinstance(model, LogisticRegression)
+
+
+def test_normalize_logistic_params_sklearn_deprecated_branch(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(train_module.sklearn, "__version__", "1.8.0")
+    params = {"C": 1.0, "penalty": "l1", "solver": "saga", "max_iter": 1000}
+    normalized = _normalize_logistic_params(params)
+    assert "penalty" not in normalized
+    assert normalized["l1_ratio"] == 1.0
+    assert normalized["solver"] == "saga"
+
+
+def test_normalize_logistic_params_legacy_branch(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(train_module.sklearn, "__version__", "1.7.1")
+    params = {"C": 1.0, "penalty": "l1", "solver": "saga"}
+    normalized = _normalize_logistic_params(params)
+    assert normalized["penalty"] == "l1"
+    assert normalized["l1_ratio"] == 1.0
 
 
 def test_build_model_unsupported_type():

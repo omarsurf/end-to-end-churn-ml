@@ -9,6 +9,7 @@ from typing import Any
 
 import joblib
 import pandas as pd
+import sklearn
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 
@@ -28,12 +29,46 @@ from .track import file_sha256, log_run
 logger = logging.getLogger(__name__)
 
 
+def _parse_major_minor(version: str) -> tuple[int, int]:
+    parts = version.split(".")
+    values: list[int] = []
+    for part in parts[:2]:
+        digits = "".join(ch for ch in part if ch.isdigit())
+        values.append(int(digits) if digits else 0)
+    while len(values) < 2:
+        values.append(0)
+    return values[0], values[1]
+
+
+def _sklearn_penalty_is_deprecated() -> bool:
+    return _parse_major_minor(sklearn.__version__) >= (1, 8)
+
+
+def _normalize_logistic_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Normalize LogisticRegression parameters across sklearn versions."""
+    normalized = dict(params)
+    has_penalty = "penalty" in normalized
+    penalty = normalized.get("penalty")
+    if isinstance(penalty, str):
+        penalty = penalty.lower()
+
+    if penalty in {"l1", "l2"} and "l1_ratio" not in normalized:
+        normalized["l1_ratio"] = 1.0 if penalty == "l1" else 0.0
+
+    if _sklearn_penalty_is_deprecated():
+        if has_penalty and penalty in {None, "none"}:
+            normalized["C"] = float("inf")
+        normalized.pop("penalty", None)
+
+    return normalized
+
+
 def build_model(candidate: dict[str, Any]):
     """Build a model instance from a candidate config dict."""
     model_type = candidate["type"]
     params = candidate.get("params", {})
     if model_type == "logistic_regression":
-        return LogisticRegression(**params)
+        return LogisticRegression(**_normalize_logistic_params(params))
     if model_type == "xgboost":
         try:
             from xgboost import XGBClassifier

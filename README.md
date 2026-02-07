@@ -45,6 +45,14 @@ churn-model-rollback                # rollback
 - **MLflow**: experiment tracking
 - **GitHub Actions**: CI (lint + tests)
 
+## Artifact Policy
+| Artifact | Policy | Why |
+|----------|--------|-----|
+| `models/registry.json` | Track in Git | Source of truth for promoted model |
+| `models/final_test_results.csv` | Track in Git | Deployment quality evidence |
+| `models/*_v*_*.joblib` | Do not track | Large immutable model binaries |
+| `metrics/*`, `logs/*` | Do not track | Runtime-generated operational data |
+
 ## Project Structure
 ```
 ├── config/           # YAML configuration

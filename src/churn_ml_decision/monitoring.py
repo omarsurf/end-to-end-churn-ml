@@ -12,15 +12,40 @@ from scipy.stats import ks_2samp
 class DataDriftDetector:
     """Detect drift using two-sample Kolmogorov-Smirnov tests."""
 
-    def __init__(self, *, p_value_threshold: float = 0.05):
+    def __init__(
+        self,
+        *,
+        p_value_threshold: float = 0.05,
+        max_reference_samples: int | None = 2000,
+        random_state: int = 42,
+    ):
+        if max_reference_samples is not None and max_reference_samples < 1:
+            raise ValueError("max_reference_samples must be >= 1 or None.")
         self.p_value_threshold = p_value_threshold
+        self.max_reference_samples = max_reference_samples
+        self.random_state = random_state
         self.reference_samples: dict[str, list[float]] = {}
+        self.reference_counts: dict[str, dict[str, int]] = {}
+
+    def _cap_reference_series(self, values: pd.Series) -> pd.Series:
+        if self.max_reference_samples is None or len(values) <= self.max_reference_samples:
+            return values
+        return values.sample(n=self.max_reference_samples, random_state=self.random_state)
 
     def fit(self, reference_data: pd.DataFrame) -> None:
         numeric_df = reference_data.select_dtypes(include=["number"]).copy()
-        self.reference_samples = {
-            col: numeric_df[col].dropna().astype(float).tolist() for col in numeric_df.columns
-        }
+        samples: dict[str, list[float]] = {}
+        counts: dict[str, dict[str, int]] = {}
+        for col in numeric_df.columns:
+            clean = numeric_df[col].dropna().astype(float)
+            capped = self._cap_reference_series(clean)
+            samples[col] = capped.tolist()
+            counts[col] = {
+                "original": int(len(clean)),
+                "stored": int(len(capped)),
+            }
+        self.reference_samples = samples
+        self.reference_counts = counts
 
     def detect_drift(self, new_data: pd.DataFrame) -> dict[str, Any]:
         if not self.reference_samples:
@@ -60,6 +85,9 @@ class DataDriftDetector:
     def save(self, path: str | Path) -> None:
         payload = {
             "p_value_threshold": self.p_value_threshold,
+            "max_reference_samples": self.max_reference_samples,
+            "random_state": self.random_state,
+            "reference_counts": self.reference_counts,
             "reference_samples": self.reference_samples,
         }
         output_path = Path(path)
@@ -69,10 +97,34 @@ class DataDriftDetector:
     @classmethod
     def load(cls, path: str | Path) -> "DataDriftDetector":
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        detector = cls(p_value_threshold=float(payload["p_value_threshold"]))
+        raw_max_reference_samples = payload.get("max_reference_samples", 2000)
+        max_reference_samples = (
+            None
+            if raw_max_reference_samples is None
+            else int(raw_max_reference_samples)
+        )
+        detector = cls(
+            p_value_threshold=float(payload["p_value_threshold"]),
+            max_reference_samples=max_reference_samples,
+            random_state=int(payload.get("random_state", 42)),
+        )
         detector.reference_samples = {
             col: [float(v) for v in values] for col, values in payload["reference_samples"].items()
         }
+        raw_counts = payload.get("reference_counts", {})
+        if isinstance(raw_counts, dict):
+            counts: dict[str, dict[str, int]] = {}
+            for col, values in detector.reference_samples.items():
+                stats = raw_counts.get(col, {})
+                original = int(stats.get("original", len(values))) if isinstance(stats, dict) else len(values)
+                stored = int(stats.get("stored", len(values))) if isinstance(stats, dict) else len(values)
+                counts[col] = {"original": original, "stored": stored}
+            detector.reference_counts = counts
+        else:
+            detector.reference_counts = {
+                col: {"original": len(values), "stored": len(values)}
+                for col, values in detector.reference_samples.items()
+            }
         return detector
 
 

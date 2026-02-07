@@ -15,6 +15,7 @@ model:
       params:
         C: 1.0
         penalty: l1
+        l1_ratio: 1.0
         solver: saga
         max_iter: 1000
         class_weight: null
@@ -172,6 +173,7 @@ logging:
 monitoring:
   enabled: true
   drift_p_value_threshold: 0.05
+  max_reference_samples: 2000
   reference_file: models/drift_reference.json
   drift_report_file: metrics/data_drift_report.json
   metrics_file: metrics/production_metrics.json

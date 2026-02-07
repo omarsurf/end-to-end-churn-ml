@@ -26,6 +26,19 @@ def load_model_with_retry(model_path: Path):
     return joblib.load(model_path)
 
 
+def _safe_confusion_values(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[int, int, int, int]:
+    """Extract confusion matrix values safely, handling missing classes.
+
+    When a threshold is extreme (0 or 1), one class may be entirely absent
+    from predictions, causing confusion_matrix().ravel() to return fewer
+    than 4 elements. This function ensures we always get tn, fp, fn, tp.
+    """
+    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+    # labels=[0, 1] forces a 2x2 matrix even if one class is missing
+    tn, fp, fn, tp = cm.ravel()
+    return int(tn), int(fp), int(fn), int(tp)
+
+
 def threshold_analysis(
     y_true: np.ndarray,
     y_proba: np.ndarray,
@@ -36,7 +49,7 @@ def threshold_analysis(
     rows = []
     for thresh in thresholds:
         y_pred = (y_proba >= thresh).astype(int)
-        tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+        tn, fp, fn, tp = _safe_confusion_values(y_true, y_pred)
 
         precision = precision_score(y_true, y_pred, zero_division=0)
         recall = recall_score(y_true, y_pred, zero_division=0)
@@ -370,7 +383,7 @@ def main() -> None:
         precision = float(precision_score(y_test, y_test_pred, zero_division=0))
         recall = float(recall_score(y_test, y_test_pred, zero_division=0))
         f1 = float(f1_score(y_test, y_test_pred, zero_division=0))
-        tn, fp, fn, tp = confusion_matrix(y_test, y_test_pred).ravel()
+        tn, fp, fn, tp = _safe_confusion_values(y_test, y_test_pred)
 
         net_value = None
         net_per_flagged = None
