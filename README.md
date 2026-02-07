@@ -61,5 +61,59 @@ churn-model-rollback                # rollback
 - [Deployment Checklist](docs/DEPLOYMENT_CHECKLIST.md)
 - [Project Report](docs/PROJECT_REPORT.md)
 
+---
+
+## Production Status
+
+### Current State: Batch-Ready
+
+| Capability | Status |
+|------------|--------|
+| Batch inference | Ready |
+| Model versioning | Ready |
+| Quality gates | Ready |
+| Drift detection | Ready |
+| CI/CD pipeline | Ready |
+| Test coverage | 89% |
+
+### Roadmap: Real-Time Deployment
+
+The following items are planned to extend this project for real-time inference:
+
+| Item | Priority | Effort | Description |
+|------|----------|--------|-------------|
+| **FastAPI wrapper** | High | 1 day | REST API endpoints for single/batch predictions |
+| **Dockerfile** | High | 2 hours | Container image for consistent deployment |
+| **Health endpoint** | Medium | 1 hour | `/health` and `/ready` for orchestrators |
+| **Async processing** | Medium | 1 day | Queue-based inference for high throughput |
+| **Cloud storage** | Medium | 2 hours | S3/GCS for model artifact backup |
+| **Drift alerting** | Low | 2 hours | Webhook/email when drift detected |
+
+#### Proposed API Design
+
+```
+POST /predict          → Single customer prediction
+POST /predict/batch    → Batch predictions (JSON array)
+GET  /model/info       → Current production model metadata
+GET  /health           → Service health status
+GET  /metrics          → Prometheus metrics
+```
+
+#### Proposed Directory Additions
+
+```
+├── api/
+│   ├── main.py        # FastAPI application
+│   ├── routes.py      # Endpoint definitions
+│   └── schemas.py     # Request/response models
+├── Dockerfile
+├── docker-compose.yml
+└── k8s/               # Kubernetes manifests (optional)
+```
+
+> **Note**: The core ML logic (`predict.py`, `model_registry.py`, `monitoring.py`) is already designed for easy integration with an API layer.
+
+---
+
 ## Author
 **Omar Piro** - Machine Learning Engineer
