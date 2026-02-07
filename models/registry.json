@@ -9,7 +9,11 @@
         "roc_auc": 0.8612829057841845,
         "precision": 0.6904761904761905,
         "recall": 0.5427807486631016,
-        "f1": 0.6077844311377245
+        "f1": 0.6077844311377245,
+        "test_roc_auc": 0.8383941718980081,
+        "test_precision": 0.5041597337770383,
+        "test_recall": 0.8101604278074866,
+        "test_f1": 0.6215384615384615
       },
       "status": "production",
       "input_features": [
@@ -83,7 +87,7 @@
   ],
   "current_production_model_id": "logistic_regression-v20260207134143",
   "previous_production_model_id": null,
-  "updated_at": "2026-02-07T13:41:43.542405Z",
+  "updated_at": "2026-02-07T13:49:04.435796Z",
   "current_model_path": "models/logistic_regression_v2_20260207134143.joblib",
   "runs": [
     {
@@ -94,7 +98,11 @@
         "roc_auc": 0.8612829057841845,
         "precision": 0.6904761904761905,
         "recall": 0.5427807486631016,
-        "f1": 0.6077844311377245
+        "f1": 0.6077844311377245,
+        "test_roc_auc": 0.8383941718980081,
+        "test_precision": 0.5041597337770383,
+        "test_recall": 0.8101604278074866,
+        "test_f1": 0.6215384615384615
       },
       "status": "production",
       "config_hash": "7a78ddfdd5a41acc60b66d5b2a869a51b1ce6711659ca24b9d77b7b0683a9977",
