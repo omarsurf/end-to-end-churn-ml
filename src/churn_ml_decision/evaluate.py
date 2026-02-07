@@ -72,14 +72,53 @@ def threshold_analysis(
     return df
 
 
-def select_threshold(df: pd.DataFrame, min_recall: float) -> tuple[pd.Series, str]:
-    high_recall = df[df["Recall"] >= min_recall]
-    if not high_recall.empty:
-        idx = high_recall["Precision"].idxmax()
-        reason = f"Recall >= {min_recall:.2f} with best precision"
-    else:
+def select_threshold(
+    df: pd.DataFrame,
+    min_recall: float,
+    optimize_for: str = "net_value",
+    min_precision: float = 0.0,
+) -> tuple[pd.Series, str]:
+    """Select optimal threshold based on business or ML criteria.
+
+    Args:
+        df: Threshold analysis DataFrame with columns Recall, Precision, F1_Score,
+            and optionally Net_Value.
+        min_recall: Minimum recall constraint. Set to 0.0 to disable.
+        optimize_for: Selection strategy - "net_value" (default), "precision", or "f1".
+        min_precision: Minimum precision constraint. Set to 0.0 to disable.
+
+    Returns:
+        Tuple of (selected row as Series, reason string).
+    """
+    # Build constraint description for reason string
+    constraints = []
+    if min_recall > 0:
+        constraints.append(f"Recall >= {min_recall:.2f}")
+    if min_precision > 0:
+        constraints.append(f"Precision >= {min_precision:.2f}")
+    constraint_str = " & ".join(constraints) if constraints else "no constraints"
+
+    # Apply filters
+    candidates = df.copy()
+    if min_recall > 0:
+        candidates = candidates[candidates["Recall"] >= min_recall]
+    if min_precision > 0:
+        candidates = candidates[candidates["Precision"] >= min_precision]
+
+    if candidates.empty:
         idx = df["F1_Score"].idxmax()
-        reason = "Best F1 (fallback)"
+        return df.loc[idx], f"Best F1 (no threshold met {constraint_str})"
+
+    if optimize_for == "net_value" and "Net_Value" in candidates.columns:
+        idx = candidates["Net_Value"].idxmax()
+        reason = f"Best Net_Value ({constraint_str})"
+    elif optimize_for == "precision":
+        idx = candidates["Precision"].idxmax()
+        reason = f"Best Precision ({constraint_str})"
+    else:
+        idx = candidates["F1_Score"].idxmax()
+        reason = f"Best F1 ({constraint_str})"
+
     return df.loc[idx], reason
 
 
@@ -225,7 +264,12 @@ def main() -> None:
             retained_value=retained_value,
             contact_cost=contact_cost,
         )
-        selected_row, reason = select_threshold(df_threshold, min_recall)
+        selected_row, reason = select_threshold(
+            df_threshold,
+            min_recall,
+            optimize_for=cfg.evaluation.optimize_for,
+            min_precision=cfg.evaluation.min_precision,
+        )
         final_threshold = float(selected_row["Threshold"])
         logger.info(
             "Threshold selected",

@@ -62,9 +62,15 @@ class ModelConfig(StrictBaseModel):
 
 class EvaluationConfig(StrictBaseModel):
     min_recall: float = Field(default=0.70, ge=0.0, le=1.0)
+    min_precision: float = Field(default=0.0, ge=0.0, le=1.0)
     threshold_min: float = Field(default=0.20, ge=0.0, lt=1.0)
     threshold_max: float = Field(default=0.85, gt=0.0, le=1.0)
     threshold_step: float = Field(default=0.05, gt=0.0, le=1.0)
+    optimize_for: str = Field(
+        default="net_value",
+        pattern=r"^(net_value|precision|f1)$",
+        description="Threshold selection strategy: net_value, precision, or f1",
+    )
 
     @model_validator(mode="after")
     def validate_thresholds(self) -> "EvaluationConfig":

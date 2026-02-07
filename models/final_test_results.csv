@@ -1,2 +1,2 @@
-model_type,final_threshold,test_set_size,roc_auc,precision,recall,f1_score,true_positives,false_positives,true_negatives,false_negatives,net_value,net_value_per_flagged,evaluation_date
-logistic_regression,0.6,1409,0.8390865173473869,0.55863539445629,0.7005347593582888,0.6215895610913404,262,207,828,112,133750.0,285.181236673774,2026-02-05 14:29:24
+model_type,model_id,final_threshold,test_set_size,roc_auc,precision,recall,f1_score,true_positives,false_positives,true_negatives,false_negatives,net_value,net_value_per_flagged,evaluation_date,selection_reason
+logistic_regression,legacy-model-1,0.45,1409,0.8390865173473869,0.49128367670364503,0.8288770053475936,0.6169154228855721,310,321,714,64,154450.0,244.770206022187,2026-02-07 01:31:37,Best Net_Value (Recall >= 0.70 & Precision >= 0.50)

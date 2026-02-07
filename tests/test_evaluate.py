@@ -101,7 +101,7 @@ def test_quality_gates_boundary_values():
 
 
 def test_select_threshold_high_recall_exists():
-    """When rows meet min_recall, pick the one with best precision."""
+    """When rows meet min_recall with optimize_for=precision, pick best precision."""
     df = pd.DataFrame(
         {
             "Threshold": [0.3, 0.5, 0.7],
@@ -110,9 +110,9 @@ def test_select_threshold_high_recall_exists():
             "F1_Score": [0.73, 0.77, 0.63],
         }
     )
-    selected, reason = select_threshold(df, min_recall=0.70)
+    selected, reason = select_threshold(df, min_recall=0.70, optimize_for="precision")
     assert selected["Threshold"] == 0.5
-    assert "Recall >= 0.70" in reason
+    assert "Precision" in reason
 
 
 def test_select_threshold_fallback_to_f1():
@@ -140,8 +140,39 @@ def test_select_threshold_single_row():
             "F1_Score": [0.77],
         }
     )
-    selected, reason = select_threshold(df, min_recall=0.70)
+    selected, reason = select_threshold(df, min_recall=0.70, optimize_for="precision")
     assert selected["Threshold"] == 0.5
+
+
+def test_select_threshold_net_value_optimization():
+    """Net_Value optimization selects most profitable threshold."""
+    df = pd.DataFrame(
+        {
+            "Threshold": [0.3, 0.5, 0.7],
+            "Recall": [0.92, 0.82, 0.65],
+            "Precision": [0.45, 0.55, 0.70],
+            "F1_Score": [0.60, 0.66, 0.67],
+            "Net_Value": [168000, 155000, 130000],
+        }
+    )
+    row, reason = select_threshold(df, min_recall=0.70, optimize_for="net_value")
+    assert row["Threshold"] == 0.3  # Highest Net_Value with recall >= 0.70
+    assert "Net_Value" in reason
+
+
+def test_select_threshold_net_value_fallback_to_f1():
+    """When Net_Value column missing, net_value mode falls back to F1."""
+    df = pd.DataFrame(
+        {
+            "Threshold": [0.3, 0.5, 0.7],
+            "Recall": [0.92, 0.82, 0.75],
+            "Precision": [0.45, 0.55, 0.70],
+            "F1_Score": [0.60, 0.66, 0.72],
+        }
+    )
+    row, reason = select_threshold(df, min_recall=0.70, optimize_for="net_value")
+    assert row["Threshold"] == 0.7  # Best F1 among those with recall >= 0.70
+    assert "F1" in reason
 
 
 # ---------- main() integration tests ----------
