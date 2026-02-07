@@ -80,14 +80,14 @@ churn-model-rollback                # rollback
 
 The following items are planned to extend this project for real-time inference:
 
-| Item | Priority | Effort | Description |
-|------|----------|--------|-------------|
-| **FastAPI wrapper** | High | 1 day | REST API endpoints for single/batch predictions |
-| **Dockerfile** | High | 2 hours | Container image for consistent deployment |
-| **Health endpoint** | Medium | 1 hour | `/health` and `/ready` for orchestrators |
-| **Async processing** | Medium | 1 day | Queue-based inference for high throughput |
-| **Cloud storage** | Medium | 2 hours | S3/GCS for model artifact backup |
-| **Drift alerting** | Low | 2 hours | Webhook/email when drift detected |
+| Item | Priority | Description |
+|------|----------|-------------|
+| **FastAPI wrapper** | High | REST API endpoints for single/batch predictions |
+| **Dockerfile** | High | Container image for consistent deployment |
+| **Health endpoint** | Medium | `/health` and `/ready` for orchestrators |
+| **Async processing** | Medium | Queue-based inference for high throughput |
+| **Cloud storage** | Medium | S3/GCS for model artifact backup |
+| **Drift alerting** | Low |  Webhook/email when drift detected |
 
 #### Proposed API Design
 
