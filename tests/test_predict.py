@@ -121,6 +121,7 @@ def test_predict_preserves_customer_ids(tmp_path: Path, monkeypatch: pytest.Monk
             str(output_path),
             "--threshold",
             "0.5",
+            "--allow-unregistered",
         ],
     )
     predict_main()
@@ -214,6 +215,7 @@ def test_predict_outputs_probabilities_in_range(tmp_path: Path, monkeypatch: pyt
             str(input_path),
             "--output",
             str(output_path),
+            "--allow-unregistered",
         ],
     )
 
@@ -367,6 +369,7 @@ def test_predict_with_engineering_enabled_uses_model_features(
             str(input_path),
             "--output",
             str(output_path),
+            "--allow-unregistered",
         ],
     )
     predict_main()
@@ -424,13 +427,25 @@ def _make_predict_config(tmp_path: Path, registry_enabled: bool = False) -> Path
     return config_path
 
 
-def test_resolve_model_path_registry_disabled(tmp_path: Path):
-    """Test _resolve_model_path uses default when registry disabled."""
+def test_resolve_model_path_registry_disabled_fails_without_flag(tmp_path: Path):
+    """Test _resolve_model_path fails when registry disabled without --allow-unregistered."""
     config_path = _make_predict_config(tmp_path, registry_enabled=False)
     cfg = load_typed_config(config_path)
     models_dir = tmp_path / "models"
 
-    path, model_id = _resolve_model_path(tmp_path, models_dir, cfg)
+    with pytest.raises(SystemExit) as exc_info:
+        _resolve_model_path(tmp_path, models_dir, cfg)
+
+    assert "Registry disabled" in str(exc_info.value)
+
+
+def test_resolve_model_path_registry_disabled_with_allow_unregistered(tmp_path: Path):
+    """Test _resolve_model_path uses fallback when --allow-unregistered is set."""
+    config_path = _make_predict_config(tmp_path, registry_enabled=False)
+    cfg = load_typed_config(config_path)
+    models_dir = tmp_path / "models"
+
+    path, model_id = _resolve_model_path(tmp_path, models_dir, cfg, allow_unregistered=True)
 
     assert path == models_dir / "best_model.joblib"
     assert model_id is None
@@ -461,8 +476,8 @@ def test_resolve_model_path_production_registry(tmp_path: Path):
     assert model_id == "prod-v1"
 
 
-def test_resolve_model_path_fallback_latest(tmp_path: Path):
-    """Test _resolve_model_path falls back to latest when no production."""
+def test_resolve_model_path_without_production_fails_fast(tmp_path: Path):
+    """Registry-enabled scoring must require an explicit production model."""
     config_path = _make_predict_config(tmp_path, registry_enabled=True)
     cfg = load_typed_config(config_path)
     models_dir = tmp_path / "models"
@@ -480,14 +495,12 @@ def test_resolve_model_path_fallback_latest(tmp_path: Path):
         ),
     )
 
-    path, model_id = _resolve_model_path(tmp_path, models_dir, cfg)
-
-    assert path == models_dir / "latest.joblib"
-    assert model_id == "latest-v1"
+    with pytest.raises(SystemExit, match="No production model found in registry"):
+        _resolve_model_path(tmp_path, models_dir, cfg)
 
 
-def test_resolve_model_path_missing_registry_artifact_falls_back_to_canonical(tmp_path: Path):
-    """Test _resolve_model_path falls back when registry path is stale."""
+def test_resolve_model_path_missing_registry_artifact_fails_fast(tmp_path: Path):
+    """Registry-enabled scoring must fail when production artifact is missing."""
     config_path = _make_predict_config(tmp_path, registry_enabled=True)
     cfg = load_typed_config(config_path)
     models_dir = tmp_path / "models"
@@ -504,14 +517,12 @@ def test_resolve_model_path_missing_registry_artifact_falls_back_to_canonical(tm
     )
     registry.promote("missing-v1")
 
-    path, model_id = _resolve_model_path(tmp_path, models_dir, cfg)
-
-    assert path == models_dir / "best_model.joblib"
-    assert model_id is None
+    with pytest.raises(SystemExit, match="Production model artifact is missing"):
+        _resolve_model_path(tmp_path, models_dir, cfg)
 
 
-def test_resolve_model_path_empty_registry_fallback(tmp_path: Path):
-    """Test _resolve_model_path falls back to default with empty registry."""
+def test_resolve_model_path_empty_registry_fails_fast(tmp_path: Path):
+    """Registry-enabled scoring must fail with empty registry."""
     config_path = _make_predict_config(tmp_path, registry_enabled=True)
     cfg = load_typed_config(config_path)
     models_dir = tmp_path / "models"
@@ -519,10 +530,8 @@ def test_resolve_model_path_empty_registry_fallback(tmp_path: Path):
     # Empty registry
     ModelRegistry(models_dir / "registry.json")
 
-    path, model_id = _resolve_model_path(tmp_path, models_dir, cfg)
-
-    assert path == models_dir / "best_model.joblib"
-    assert model_id is None
+    with pytest.raises(SystemExit, match="No production model found in registry"):
+        _resolve_model_path(tmp_path, models_dir, cfg)
 
 
 def test_prepare_features_no_engineering(tmp_path: Path):

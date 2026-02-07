@@ -1,3 +1,9 @@
+"""Legacy registry compatibility layer.
+
+This module provides a simplified API for backward compatibility.
+All functionality delegates to model_registry.ModelRegistry.
+New code should use model_registry directly.
+"""
 from __future__ import annotations
 
 import json

@@ -436,3 +436,31 @@ def test_main_quality_gate_failure(evaluate_artifacts, monkeypatch):
         with pytest.raises(SystemExit) as exc_info:
             main()
         assert "Quality gates failed" in str(exc_info.value)
+
+
+def test_main_production_target_requires_registry(evaluate_artifacts, monkeypatch):
+    """--target production must fail when registry routing is unavailable."""
+    tmp_path, config_path = evaluate_artifacts
+    monkeypatch.setattr("churn_ml_decision.evaluate.project_root", lambda: tmp_path)
+
+    with patch(
+        "sys.argv",
+        ["evaluate", "--config", str(config_path), "--target", "production"],
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert "requires an enabled registry" in str(exc_info.value)
+
+
+def test_main_strict_forbids_registry_bypass_fallback(evaluate_artifacts, monkeypatch):
+    """--strict should fail fast instead of silently falling back."""
+    tmp_path, config_path = evaluate_artifacts
+    monkeypatch.setattr("churn_ml_decision.evaluate.project_root", lambda: tmp_path)
+
+    with patch(
+        "sys.argv",
+        ["evaluate", "--config", str(config_path), "--strict"],
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert "strict mode forbids fallback" in str(exc_info.value)

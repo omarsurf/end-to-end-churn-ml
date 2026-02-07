@@ -205,6 +205,59 @@ def test_train_logs_to_mlflow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     assert len(experiment_dirs) >= 1
 
 
+def test_train_non_strict_skips_failing_candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Non-strict mode should continue when one candidate fails."""
+    data_dir, models_dir = _make_synthetic_data(tmp_path)
+    candidates = "\n".join(
+        [
+            "    - name: lr_broken",
+            "      type: logistic_regression",
+            "      enabled: true",
+            "      params:",
+            "        solver: invalid_solver",
+            "    - name: lr_valid",
+            "      type: logistic_regression",
+            "      enabled: true",
+            "      params:",
+            "        C: 1.0",
+            "        solver: liblinear",
+        ]
+    )
+    cfg_path = _write_train_config(tmp_path, data_dir, models_dir, candidates)
+
+    monkeypatch.setattr("sys.argv", ["churn-train", "--config", str(cfg_path)])
+    train_main()
+
+    assert (models_dir / "best_model.joblib").exists()
+    summary = json.loads((models_dir / "train_summary.json").read_text())
+    assert summary["model_type"] == "lr_valid"
+
+
+def test_train_strict_fails_on_candidate_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Strict mode should fail immediately when any enabled candidate errors."""
+    data_dir, models_dir = _make_synthetic_data(tmp_path)
+    candidates = "\n".join(
+        [
+            "    - name: lr_broken",
+            "      type: logistic_regression",
+            "      enabled: true",
+            "      params:",
+            "        solver: invalid_solver",
+            "    - name: lr_valid",
+            "      type: logistic_regression",
+            "      enabled: true",
+            "      params:",
+            "        C: 1.0",
+            "        solver: liblinear",
+        ]
+    )
+    cfg_path = _write_train_config(tmp_path, data_dir, models_dir, candidates)
+
+    monkeypatch.setattr("sys.argv", ["churn-train", "--config", str(cfg_path), "--strict"])
+    with pytest.raises(ValueError):
+        train_main()
+
+
 # =============================================================================
 # Additional tests for helper functions
 # =============================================================================
@@ -387,6 +440,12 @@ def test_train_registry_creates_immutable_model_files(
     assert (models_dir / "best_model.joblib").exists()
 
     registry = json.loads((models_dir / "registry.json").read_text())
+    # Registry points to timestamped files (immutable) for true rollback support.
+    # Each run has unique model_id AND unique model_path.
     run_paths = [run["model_path"] for run in registry["runs"]]
     assert len(run_paths) == 2
     assert run_paths[0] != run_paths[1]
+    # Each path should be a timestamped file, not the canonical best_model.joblib
+    for run in registry["runs"]:
+        assert "best_model.joblib" not in run["model_path"]
+        assert "_v1_" in run["model_path"]  # version + timestamp pattern

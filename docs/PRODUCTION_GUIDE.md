@@ -1,143 +1,49 @@
 # Production Guide
 
-## Architecture Overview
+## Pipeline Flow
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Configuration                             │
-│                     config/default.yaml                          │
-│  (paths, model, features, business, quality, validation, etc.)  │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      churn-prepare                               │
-│                                                                  │
-│  • Load raw CSV from paths.data_raw                             │
-│  • Validate schema (required columns, types, ranges)            │
-│  • Quality checks (missing, duplicates, target distribution)    │
-│  • Feature engineering (14+ derived features)                   │
-│  • Train/val/test split                                         │
-│  • Fit preprocessing pipeline (StandardScaler + OneHotEncoder) │
-│  • Export drift reference statistics                            │
-│                                                                  │
-│  Outputs:                                                        │
-│  ├── data/processed/X_train_processed.npy, y_train.npy          │
-│  ├── data/processed/X_val_processed.npy, y_val.npy              │
-│  ├── data/processed/X_test_processed.npy, y_test.npy            │
-│  ├── models/preprocessor.joblib                                 │
-│  ├── models/train_medians.json                                  │
-│  ├── models/data_quality_report.json                            │
-│  └── models/drift_reference.json                                │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       churn-train                                │
-│                                                                  │
-│  • Load processed arrays                                        │
-│  • Train each enabled candidate (LR, XGB, LGBM)                 │
-│  • Evaluate on validation set                                   │
-│  • Select best by model.selection_metric                        │
-│  • Log to MLflow (if enabled)                                   │
-│  • Register in model registry                                   │
-│                                                                  │
-│  Outputs:                                                        │
-│  ├── models/best_model.joblib                                   │
-│  ├── models/train_summary.json                                  │
-│  ├── models/registry.json                                       │
-│  ├── models/experiments.jsonl                                   │
-│  └── mlruns/                                                    │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      churn-evaluate                              │
-│                                                                  │
-│  • Load model target (`--target latest|production|local`)       │
-│    - default: `latest` (most recent registered candidate)       │
-│  • Threshold sweep on validation set                            │
-│  • Select threshold (maximize Net_Value under constraints)       │
-│  • Final evaluation on test set                                 │
-│  • Compute business value metrics                               │
-│  • Enforce quality gates                                        │
-│  • Update registry status                                       │
-│                                                                  │
-│  Outputs:                                                        │
-│  ├── models/threshold_analysis_val.csv                          │
-│  └── models/final_test_results.csv                              │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      churn-predict                               │
-│                                                                  │
-│  • Validate input CSV                                           │
-│  • Load production model from registry                          │
-│  • Apply preprocessing                                          │
-│  • Generate predictions                                         │
-│  • Update production metrics                                    │
-│                                                                  │
-│  Outputs:                                                        │
-│  ├── predictions.csv                                            │
-│  └── metrics/production_metrics.json                            │
-└─────────────────────────────────────────────────────────────────┘
+config/default.yaml
+        │
+        ▼
+┌─────────────────┐
+│  churn-prepare  │  → preprocessor.joblib, train_medians.json, X/y splits
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  churn-train    │  → model registered in registry.json
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  churn-evaluate │  → threshold_analysis_val.csv, final_test_results.csv
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  churn-predict  │  → predictions.csv (uses production model from registry)
+└─────────────────┘
 ```
 
-## Module Reference
+## Key Modules
+| Module | Purpose |
+|--------|---------|
+| `prepare.py` | Data validation, feature engineering, preprocessing |
+| `train.py` | Model training, registry registration |
+| `evaluate.py` | Threshold optimization, quality gates |
+| `predict.py` | Batch inference (production model only, no silent fallback) |
+| `model_registry.py` | Model versioning, promote/rollback |
+| `monitoring.py` | Drift detection |
 
-| Module | Lines | Purpose |
-|--------|-------|---------|
-| `config.py` | 239 | Configuration loading, Pydantic models, env overrides |
-| `prepare.py` | 162 | Data prep, feature engineering, preprocessing |
-| `train.py` | 145 | Model training, candidate selection, registry |
-| `evaluate.py` | 168 | Threshold optimization, test evaluation, business metrics |
-| `predict.py` | 142 | Batch inference, input validation |
-| `cli.py` | 97 | CLI entry points for all commands |
-| `model_registry.py` | 155 | Version control, promote/rollback |
-| `validators.py` | 124 | Data validation rules |
-| `schemas.py` | 110 | Pydantic schemas for I/O |
-| `monitoring.py` | 73 | Drift detection (KS-test) |
-| `mlflow_utils.py` | 76 | MLflow integration |
-| `logging_config.py` | 35 | Structured logging setup |
-| `io.py` | 32 | File I/O utilities |
-| `track.py` | 18 | Experiment tracking (JSONL) |
-| `pipeline.py` | 20 | Pipeline orchestration |
-| `registry.py` | 17 | Registry utilities |
-| `exceptions.py` | 6 | Custom exceptions |
-
-## Configuration Reference
-
-### Paths
-```yaml
-paths:
-  data_raw: data/raw/WA_Fn-UseC_-Telco-Customer-Churn.csv
-  data_processed: data/processed
-  models: models
-```
-
-### Model
-```yaml
-model:
-  name: logistic_regression
-  version: 1
-  selection_metric: roc_auc
-  candidates:
-    - name: logistic_regression
-      enabled: true
-      params: { C: 1.0, penalty: l2, ... }
-    - name: xgboost
-      enabled: false
-    - name: lightgbm
-      enabled: false
-```
+## Configuration
 
 ### Business
 ```yaml
 business:
-  clv: 2000              # Customer lifetime value ($)
-  success_rate: 0.30     # Retention campaign success rate
-  contact_cost: 50       # Cost per contact ($)
+  clv: 2000
+  success_rate: 0.30
+  contact_cost: 50
 ```
 
 ### Quality Gates
@@ -148,121 +54,87 @@ quality:
   min_precision: 0.45
 ```
 
-### Validation
-```yaml
-validation:
-  required_columns: [tenure, MonthlyCharges, ...]
-  max_missing_ratio: 0.05
-  max_duplicate_ratio: 0.02
-  min_target_rate: 0.05
-  max_target_rate: 0.95
-```
-
 ### Environment Overrides
 ```bash
 export CHURN__BUSINESS__CLV=3000
 export CHURN__QUALITY__MIN_RECALL=0.75
-export CHURN__VALIDATION__MAX_MISSING_RATIO=0.10
 ```
+
+## Prediction Behavior
+- **Production**: requires `registry.enabled=true` + promoted model
+- **Dev/test**: use `--allow-unregistered` flag (logs warning)
+- **No silent fallback**: fails explicitly if no production model
 
 ## Troubleshooting
 
-### ConfigValidationError
+### No production model
 ```bash
-churn-validate-config --config config/default.yaml
-```
-- Check YAML syntax
-- Verify numeric ranges are valid
-- Check environment override format
-
-### DataValidationError in prepare
-```bash
-# Inspect quality report
-cat models/data_quality_report.json | python -m json.tool
-```
-- Missing required columns → check source data
-- Invalid numeric ranges → check tenure, charges are non-negative
-- Class imbalance → target rate outside [0.05, 0.95]
-
-### ModelNotFoundError in predict/evaluate
-```bash
-# Check registry
-churn-model-info --config config/default.yaml
-```
-- No model registered → run `churn-train` first
-- Model file missing → check `models/` directory
-- Promote a model: `churn-model-promote --model-id <id>`
-
-### Quality Gate Failures
-```bash
-# Check final results
-cat models/final_test_results.csv
-```
-- Adjust thresholds in `config/default.yaml:quality`
-- Review model selection metric
-- Check for data drift
-
-### Predictions Near 0.5
-- Check logs for preprocessing errors
-- Verify feature names match training
-- Check for missing values in input
-
-## Emergency Procedures
-
-### View Current Production Model
-```bash
-churn-model-info --config config/default.yaml
+churn-model-info  # check registry
+churn-model-promote --model-id <id>  # promote
 ```
 
-### Promote New Model
+### Quality gate failure
 ```bash
-churn-model-promote --model-id <model_id> --config config/default.yaml
+cat models/final_test_results.csv  # check metrics
 ```
 
-### Evaluate Target Selection
+### Drift detected
 ```bash
-# Default: evaluate latest registered candidate (pre-promotion validation)
-churn-evaluate --config config/default.yaml --target latest
-
-# Evaluate active production model (monitoring/comparison)
-churn-evaluate --config config/default.yaml --target production
-
-# Evaluate local canonical artifact only (bypass registry routing)
-churn-evaluate --config config/default.yaml --target local
+churn-check-drift --input data/new.csv
 ```
 
-### Immediate Rollback
+## Model Versioning
+
+### Artifact Strategy
+| Artifact | Purpose | Tracking |
+|----------|---------|----------|
+| `*_vN_TIMESTAMP.joblib` | Immutable production model | Local only (gitignored) |
+| `best_model.joblib` | DVC-tracked alias | DVC (for CI/notebooks) |
+| `registry.json` | Source of truth | Git (points to timestamped files) |
+
+**Note:** Timestamped files are NOT tracked by DVC. They must be preserved locally or archived manually for rollback.
+
+### Release Workflow
 ```bash
-churn-model-rollback --config config/default.yaml
+# 1. Train and validate
+churn-prepare --strict && churn-train --strict && churn-evaluate --target latest --strict
+
+# 2. Archive timestamped model (before it gets overwritten)
+cp models/*_TIMESTAMP.joblib /path/to/model-archive/
+
+# 3. Tag release
+git add models/registry.json
+git commit -m "Release model vX.Y.Z"
+git tag -a vX.Y.Z -m "Model release vX.Y.Z"
+git push origin vX.Y.Z
+
+# 4. Push DVC artifacts
+dvc push
 ```
 
-### Platform Health Check
+### Rollback
+
+**Quick rollback** (timestamped artifact still present locally):
 ```bash
-churn-health-check --config config/default.yaml
+churn-model-rollback --model-id <stable_id>
+churn-health-check
 ```
 
-### Check for Data Drift
+**Full rollback** (artifact missing, need to restore from archive):
 ```bash
-churn-check-drift --config config/default.yaml --input data/new_batch.csv
+# 1. Restore registry state
+git checkout <release_tag> -- models/registry.json
+
+# 2. Restore timestamped model from archive
+cp /path/to/model-archive/<model_file>.joblib models/
+
+# 3. Verify
+churn-model-info
+churn-health-check
 ```
 
-## Logging
-
-Logs are written to `logs/pipeline.log`:
+## Emergency
 ```bash
-tail -f logs/pipeline.log
+churn-model-rollback  # rollback to previous
+churn-health-check    # verify status
 ```
-
-Log levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
-
-Configure in `config/default.yaml:logging.level`
-
-## Monitoring Outputs
-
-| File | Description |
-|------|-------------|
-| `metrics/production_metrics.json` | Prediction statistics |
-| `metrics/data_drift_report.json` | Drift test results |
-| `models/data_quality_report.json` | Data quality summary |
-| `models/registry.json` | Model version history |
-| `models/experiments.jsonl` | Experiment logs |

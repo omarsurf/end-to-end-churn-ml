@@ -11,13 +11,13 @@ install-ops:
 	pip install -e ".[dev,ml,ops]"
 
 prepare:
-	churn-prepare --config config/default.yaml
+	churn-prepare --config config/default.yaml --strict
 
 train:
-	churn-train --config config/default.yaml
+	churn-train --config config/default.yaml --strict
 
 evaluate:
-	churn-evaluate --config config/default.yaml
+	churn-evaluate --config config/default.yaml --target latest --strict
 
 pipeline:
 	make prepare

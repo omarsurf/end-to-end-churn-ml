@@ -9,6 +9,7 @@ build/
 *.egg-info/
 .ipynb_checkpoints/
 data/processed/
+models/*_v*_*.joblib
 models/*_v2.*
 models/threshold_analysis_test.csv
 models/final_test_results_v2.csv

@@ -107,17 +107,20 @@ def select_threshold(
 
     if candidates.empty:
         idx = df["F1_Score"].idxmax()
-        return df.loc[idx], f"Best F1 on validation (no threshold met {constraint_str})"
+        return (
+            df.loc[idx],
+            f"Validation fallback: Best F1 (no threshold met constraints: {constraint_str})",
+        )
 
     if optimize_for == "net_value" and "Net_Value" in candidates.columns:
         idx = candidates["Net_Value"].idxmax()
-        reason = f"Best Net_Value on validation ({constraint_str})"
+        reason = f"Validation selection: Best Net_Value (constraints: {constraint_str})"
     elif optimize_for == "precision":
         idx = candidates["Precision"].idxmax()
-        reason = f"Best Precision on validation ({constraint_str})"
+        reason = f"Validation selection: Best Precision (constraints: {constraint_str})"
     else:
         idx = candidates["F1_Score"].idxmax()
-        reason = f"Best F1 on validation ({constraint_str})"
+        reason = f"Validation selection: Best F1 (constraints: {constraint_str})"
 
     return df.loc[idx], reason
 
@@ -155,7 +158,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Reserved strict mode flag for future compatibility.",
+        help="Fail fast on registry/model-path inconsistencies (no fallback behavior).",
     )
     parser.add_argument(
         "--target",
@@ -184,6 +187,16 @@ def _resolve_model_from_registry(
     if not model_path.is_absolute():
         model_path = resolve_path(root, model_path)
     return model_path, model.model_id
+
+
+def _registry_model_id_for_path(
+    registry: ModelRegistry | None,
+    model_path: Path,
+) -> str | None:
+    if registry is None:
+        return None
+    metadata = registry.get_model_by_path(model_path)
+    return metadata.model_id if metadata is not None else None
 
 
 def _is_path_within(root: Path, candidate: Path) -> bool:
@@ -234,6 +247,11 @@ def main() -> None:
         target = args.target
         use_registry = cfg.registry.enabled and cfg.registry.use_current and target != "local"
 
+        if target == "production" and not use_registry:
+            raise SystemExit(
+                "The production target requires an enabled registry with use_current=true."
+            )
+
         if use_registry:
             registry = ModelRegistry(resolve_path(root, cfg.registry.file))
             try:
@@ -246,8 +264,16 @@ def main() -> None:
                         "No production model found in registry. "
                         "Use --target latest or --target local."
                     ) from None
+                if args.strict:
+                    raise SystemExit(
+                        "No latest model found in registry; strict mode forbids fallback."
+                    ) from None
                 logger.warning("No latest registry model found, using canonical model artifact.")
         elif target != "local":
+            if args.strict:
+                raise SystemExit(
+                    "Registry disabled or bypassed; strict mode forbids fallback for this target."
+                )
             logger.warning(
                 "Registry disabled or bypassed; using canonical model artifact for evaluate target.",
                 extra={"target": target},
@@ -255,6 +281,10 @@ def main() -> None:
 
         # Guardrail: avoid coupling to external absolute paths stored in legacy registries.
         if model_path.is_absolute() and not _is_path_within(root, model_path):
+            if args.strict or target == "production":
+                raise SystemExit(
+                    "Registry model path is external to project; strict/production mode forbids fallback."
+                )
             fallback_model_path = models_dir / cfg.artifacts.model_file
             if fallback_model_path.exists():
                 logger.warning(
@@ -266,8 +296,13 @@ def main() -> None:
                     },
                 )
                 model_path = fallback_model_path
+                model_id = _registry_model_id_for_path(registry, fallback_model_path)
 
         if not model_path.exists():
+            if args.strict or target == "production":
+                raise SystemExit(
+                    "Requested model artifact is missing; strict/production mode forbids fallback."
+                )
             fallback_model_path = models_dir / cfg.artifacts.model_file
             if fallback_model_path.exists():
                 logger.warning(
@@ -279,7 +314,7 @@ def main() -> None:
                     },
                 )
                 model_path = fallback_model_path
-                model_id = None
+                model_id = _registry_model_id_for_path(registry, fallback_model_path)
             else:
                 raise SystemExit("Model not found. Run churn-train first.")
 

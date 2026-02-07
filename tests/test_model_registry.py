@@ -94,6 +94,45 @@ def test_legacy_migration_with_runs_format(tmp_path: Path):
     assert registry.get_production_model().model_id == "legacy-v2"
 
 
+def test_models_format_normalizes_absolute_paths(tmp_path: Path):
+    """Existing models-format registries should be path-normalized on load."""
+    import json
+    from datetime import datetime, timezone
+
+    models_dir = tmp_path / "models"
+    models_dir.mkdir(parents=True)
+    model_file = models_dir / "model_v1.joblib"
+    model_file.write_text("placeholder")
+    registry_path = models_dir / "registry.json"
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "models": [
+            {
+                "model_id": "v1",
+                "created_at": now,
+                "model_path": str(model_file.resolve()),
+                "config_hash": "abc123",
+                "metrics": {},
+                "status": "production",
+                "input_features": [],
+                "feature_importance": {},
+                "notes": None,
+            }
+        ],
+        "current_production_model_id": "v1",
+        "previous_production_model_id": None,
+        "updated_at": now,
+    }
+    registry_path.write_text(json.dumps(payload))
+
+    registry = ModelRegistry(registry_path)
+    model = registry.get_model("v1")
+
+    assert model.model_path == "models/model_v1.joblib"
+    saved = json.loads(registry_path.read_text())
+    assert saved["models"][0]["model_path"] == "models/model_v1.joblib"
+
+
 def test_legacy_migration_no_matching_production(tmp_path: Path):
     """Test legacy migration when no model matches current_model_path."""
     import json

@@ -1,6 +1,6 @@
 stages:
   prepare:
-    cmd: churn-prepare --config config/default.yaml
+    cmd: churn-prepare --config config/default.yaml --strict
     deps:
       - data/raw/WA_Fn-UseC_-Telco-Customer-Churn.csv
       - src/churn_ml_decision/prepare.py
@@ -24,7 +24,7 @@ stages:
           - engineering
 
   train:
-    cmd: churn-train --config config/default.yaml
+    cmd: churn-train --config config/default.yaml --strict
     deps:
       - data/processed/X_train_processed.npy
       - data/processed/y_train.npy
@@ -40,7 +40,7 @@ stages:
           - model
 
   evaluate:
-    cmd: churn-evaluate --config config/default.yaml
+    cmd: churn-evaluate --config config/default.yaml --target latest --strict
     deps:
       - models/best_model.joblib
       - data/processed/X_val_processed.npy

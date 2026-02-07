@@ -43,6 +43,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Fail if any input rows are invalid.",
     )
+    parser.add_argument(
+        "--allow-unregistered",
+        action="store_true",
+        help="Allow scoring without production model (dev/test only).",
+    )
     return parser.parse_args()
 
 
@@ -83,69 +88,54 @@ def _resolve_registry_model_path(root: Path, raw_model_path: str) -> Path:
     return model_path
 
 
-def _resolve_model_path(root: Path, models_dir: Path, cfg) -> tuple[Path, str | None]:
+def _resolve_model_path(
+    root: Path, models_dir: Path, cfg, *, allow_unregistered: bool = False
+) -> tuple[Path, str | None]:
     fallback_path = models_dir / cfg.artifacts.model_file
     if cfg.registry.enabled and cfg.registry.use_current:
         registry = ModelRegistry(resolve_path(root, cfg.registry.file))
-
-        candidates: list[tuple[str, Path, str | None]] = []
         try:
             production = registry.get_production_model()
-            candidates.append(
-                (
-                    "production",
-                    _resolve_registry_model_path(root, production.model_path),
-                    production.model_id,
-                )
-            )
-        except ModelNotFoundError:
-            pass
+        except ModelNotFoundError as exc:
+            raise SystemExit(
+                "No production model found in registry. Promote a model before running predictions."
+            ) from exc
 
-        try:
-            latest = registry.get_latest_model()
-            latest_path = _resolve_registry_model_path(root, latest.model_path)
-            if not candidates or candidates[0][2] != latest.model_id:
-                candidates.append(("latest", latest_path, latest.model_id))
-        except ModelNotFoundError:
-            pass
+        candidate_path = _resolve_registry_model_path(root, production.model_path)
+        if candidate_path.is_absolute():
+            try:
+                candidate_path.resolve().relative_to(root.resolve())
+            except ValueError as exc:
+                raise SystemExit(
+                    "Production model path is external to project; prediction fallback is disabled."
+                ) from exc
 
-        for source, candidate_path, candidate_id in candidates:
-            if candidate_path.exists():
-                if candidate_path.is_absolute():
-                    try:
-                        candidate_path.resolve().relative_to(root.resolve())
-                    except ValueError:
-                        if fallback_path.exists():
-                            logger.warning(
-                                "Registry model path is external to project; using canonical fallback model.",
-                                extra={
-                                    "source": source,
-                                    "model_id": candidate_id,
-                                    "model_path": str(candidate_path),
-                                    "fallback_model_path": str(fallback_path),
-                                },
-                            )
-                            return fallback_path, candidate_id
-                        logger.warning(
-                            "Registry model path is external to project; skipping candidate.",
-                            extra={
-                                "source": source,
-                                "model_id": candidate_id,
-                                "model_path": str(candidate_path),
-                            },
-                        )
-                        continue
-                return candidate_path, candidate_id
-            logger.warning(
-                "Registry model artifact missing; trying fallback.",
-                extra={
-                    "source": source,
-                    "model_id": candidate_id,
-                    "model_path": str(candidate_path),
-                },
+        if not candidate_path.exists():
+            raise SystemExit(
+                "Production model artifact is missing; prediction fallback is disabled."
             )
 
-    return fallback_path, None
+        return candidate_path, production.model_id
+
+    # No silent fallback: require explicit opt-in for unregistered models
+    if allow_unregistered:
+        logger.warning(
+            "Scoring with unregistered model (--allow-unregistered). "
+            "This should only be used for dev/test.",
+            extra={"model_path": str(fallback_path), "model_id": None},
+        )
+        return fallback_path, None
+
+    if cfg.registry.enabled:
+        raise SystemExit(
+            "registry.enabled=True but registry.use_current=False. "
+            "Set use_current=True or use --allow-unregistered for dev/test."
+        )
+
+    raise SystemExit(
+        "Registry disabled. Production predictions require registry.enabled=True "
+        "and a promoted production model. Use --allow-unregistered for dev/test."
+    )
 
 
 def _prediction_required_columns(cfg) -> list[str]:
@@ -197,7 +187,9 @@ def main() -> None:
         preprocessor = joblib.load(preprocessor_path)
         model_required_columns = list(getattr(preprocessor, "feature_names_in_", []))
 
-        model_path, model_id = _resolve_model_path(root, models_dir, cfg)
+        model_path, model_id = _resolve_model_path(
+            root, models_dir, cfg, allow_unregistered=args.allow_unregistered
+        )
         if not model_path.exists():
             raise SystemExit("Model not found. Run churn-train first.")
 

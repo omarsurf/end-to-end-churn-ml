@@ -5,19 +5,19 @@ paths:
 
 model:
   name: logistic_regression
-  version: 1
+  version: 2
   selection_metric: roc_auc
-  notes: "Default uses l2 + class_weight=balanced for stability; update if you want tuned params from notebook 09."
+  notes: "Tuned params from notebook 09 (GridSearchCV best: l1/saga, ROC-AUC CV=0.8453)"
   candidates:
     - name: logistic_regression
       type: logistic_regression
       enabled: true
       params:
         C: 1.0
-        penalty: l2
-        solver: liblinear
+        penalty: l1
+        solver: saga
         max_iter: 1000
-        class_weight: balanced
+        class_weight: null
         random_state: 42
     - name: xgboost
       type: xgboost
@@ -131,10 +131,11 @@ mlflow:
   register_model: false
   model_name: churn-classifier
 
+# Quality gates applied on TEST set (slightly relaxed vs validation selection constraints)
 quality:
   min_roc_auc: 0.83
   min_recall: 0.70
-  min_precision: 0.45
+  min_precision: 0.45  # Relaxed vs evaluation.min_precision (0.50) to allow val→test variance
 
 validation:
   required_columns:

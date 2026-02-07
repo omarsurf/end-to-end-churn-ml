@@ -20,8 +20,8 @@ jobs:
         run: ruff check src tests
       - name: Pipeline
         run: |
-          churn-prepare --config config/default.yaml
-          churn-train --config config/default.yaml
-          churn-evaluate --config config/default.yaml
+          churn-prepare --config config/default.yaml --strict
+          churn-train --config config/default.yaml --strict
+          churn-evaluate --config config/default.yaml --target latest --strict
       - name: Test
-        run: pytest --cov=churn_ml_decision --cov-report=term-missing
+        run: pytest --cov=churn_ml_decision --cov-report=term-missing --cov-fail-under=88

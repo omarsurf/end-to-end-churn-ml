@@ -1,152 +1,81 @@
 # Deployment Checklist
 
-## Pre-Deployment Validation
+## Pre-Deployment
 
-### Code Quality
-- [ ] `python -m ruff check src tests` passes (zero warnings)
-- [ ] `python -m pytest` passes (88% coverage target)
-- [ ] `churn-validate-config --config config/default.yaml` succeeds
+### Tests
+- [ ] `pytest` passes
+- [ ] `ruff check src tests` passes
 
-### Pipeline Execution
-- [ ] `churn-prepare --config config/default.yaml --strict` succeeds
-- [ ] `churn-train --config config/default.yaml --strict` succeeds
-- [ ] `churn-evaluate --config config/default.yaml --strict` succeeds
+### Pipeline
+- [ ] `churn-prepare --strict` succeeds
+- [ ] `churn-train --strict` succeeds
+- [ ] `churn-evaluate --target latest --strict` succeeds
 
 ### Quality Gates
-Verify `models/final_test_results.csv` meets thresholds:
-- [ ] ROC-AUC ≥ 0.83
-- [ ] Recall ≥ 0.70
-- [ ] Precision ≥ 0.45
+Check `models/final_test_results.csv`:
+- [ ] ROC-AUC >= 0.83
+- [ ] Recall >= 0.70
+- [ ] Precision >= 0.45 (relaxed from 0.50 validation constraint to allow val→test variance)
 
-### Registry Status
-- [ ] Model registered in `models/registry.json`
-- [ ] Model file exists at specified path
-- [ ] Train summary available in `models/train_summary.json`
+## Deployment
 
-## Deployment Steps
-
-### 1. Confirm Current State
+### 1. Check Current State
 ```bash
-churn-model-info --config config/default.yaml
+churn-model-info
 ```
-- [ ] Note current production model ID
-- [ ] Record current model metrics for comparison
 
-### 2. Promote New Model
+### 2. Promote Model
 ```bash
-churn-model-promote --model-id <release_model_id> --config config/default.yaml
+churn-model-promote --model-id <id>
 ```
-- [ ] Promotion succeeds
-- [ ] Registry updated with new current model
 
 ### 3. Smoke Test
 ```bash
-churn-predict --config config/default.yaml \
-  --input data/new_customers.csv \
-  --output data/predictions.csv
+churn-predict --input data/test.csv --output /tmp/pred.csv
 ```
-- [ ] Prediction completes without errors
-- [ ] Output file generated with valid probabilities
 
 ### 4. Drift Check
 ```bash
-churn-check-drift --config config/default.yaml --input data/new_customers.csv
+churn-check-drift --input data/new_batch.csv
 ```
-- [ ] Input follows raw scoring schema (the command applies training-consistent feature engineering before drift comparison)
-- [ ] No significant drift detected (p-value > 0.05 for all features)
-- [ ] Or: drift documented and accepted
 
-## Post-Deployment Validation
+## Rollback
 
-### Health Check
+### Quick Rollback (artifact present)
 ```bash
-churn-health-check --config config/default.yaml
-```
-- [ ] Status: healthy
+# 1. Identify stable model
+churn-model-info
 
-### Logs Review
+# 2. Rollback to previous or specific model
+churn-model-rollback
+# or: churn-model-rollback --model-id <stable_id>
+
+# 3. Verify
+churn-health-check
+churn-predict --input data/test.csv --output /tmp/smoke.csv
+```
+
+### Full Rollback (artifact missing)
+If the timestamped model file is missing locally:
 ```bash
-tail -100 logs/pipeline.log | grep -E "(ERROR|CRITICAL)"
+# 1. Restore registry state from release tag
+git checkout <release_tag> -- models/registry.json
+
+# 2. Restore timestamped model from archive
+cp /path/to/model-archive/<model_file>.joblib models/
+
+# 3. Verify
+churn-model-info
+churn-health-check
 ```
-- [ ] No unexpected errors
 
-### Metrics Verification
-- [ ] `metrics/production_metrics.json` updated after predictions
-- [ ] Prediction distribution within expected range
-
-### Output Validation
-- [ ] Predictions in valid range [0, 1]
-- [ ] No null/NaN values in output
-- [ ] Correct number of rows (matches input)
-
-## Rollback Procedure
-
-### 1. Identify Previous Model
-```bash
-churn-model-info --config config/default.yaml
-```
-Note the previous stable model ID from history.
-
-### 2. Execute Rollback
-```bash
-# Quick rollback to previous
-churn-model-rollback --config config/default.yaml
-
-# Or explicit target
-churn-model-rollback --model-id <stable_id> --config config/default.yaml
-```
-- [ ] Rollback succeeds
-
-### 3. Verify Rollback
-```bash
-churn-model-info --config config/default.yaml
-```
-- [ ] Current model is the previous stable version
-
-### 4. Smoke Test After Rollback
-```bash
-churn-predict --config config/default.yaml \
-  --input data/new_customers.csv \
-  --output data/predictions_rollback.csv
-```
-- [ ] Predictions complete successfully
-
-### 5. Health Check After Rollback
-```bash
-churn-health-check --config config/default.yaml
-```
-- [ ] Status: healthy
-
-### 6. Document Incident
-- [ ] Record timestamp of rollback
-- [ ] Document root cause
-- [ ] Create follow-up ticket for investigation
+**Note:** Timestamped models are not tracked by DVC. Maintain a model archive for disaster recovery.
 
 ## Quick Reference
-
 | Action | Command |
 |--------|---------|
-| Validate config | `churn-validate-config --config config/default.yaml` |
-| Run tests | `make test` |
-| Full pipeline | `make pipeline` |
-| Model info | `churn-model-info --config config/default.yaml` |
-| Promote | `churn-model-promote --model-id <id> --config config/default.yaml` |
-| Rollback | `churn-model-rollback --config config/default.yaml` |
-| Health check | `churn-health-check --config config/default.yaml` |
-| Drift check | `churn-check-drift --config config/default.yaml --input <file>` |
-| View logs | `tail -f logs/pipeline.log` |
-
-## Monitoring Checklist (Ongoing)
-
-Daily:
-- [ ] Review `logs/pipeline.log` for errors
-- [ ] Check prediction volumes in `metrics/production_metrics.json`
-
-Weekly:
-- [ ] Run drift check on recent batch
-- [ ] Compare prediction distribution to baseline
-
-Monthly:
-- [ ] Review model performance metrics
-- [ ] Evaluate need for retraining
-- [ ] Audit registry history
+| Model info | `churn-model-info` |
+| Promote | `churn-model-promote --model-id <id>` |
+| Rollback | `churn-model-rollback` |
+| Health | `churn-health-check` |
+| Drift | `churn-check-drift --input <file>` |

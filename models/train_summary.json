@@ -3,14 +3,14 @@
   "selection_metric": "roc_auc",
   "params": {
     "C": 1.0,
-    "penalty": "l2",
-    "solver": "liblinear",
+    "penalty": "l1",
+    "solver": "saga",
     "max_iter": 1000,
-    "class_weight": "balanced",
+    "class_weight": null,
     "random_state": 42
   },
-  "validation_roc_auc": 0.8610736521222455,
-  "validation_precision": 0.5329861111111112,
-  "validation_recall": 0.820855614973262,
-  "validation_f1": 0.6463157894736842
+  "validation_roc_auc": 0.8612829057841845,
+  "validation_precision": 0.6904761904761905,
+  "validation_recall": 0.5427807486631016,
+  "validation_f1": 0.6077844311377245
 }

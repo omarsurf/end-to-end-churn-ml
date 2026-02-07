@@ -70,7 +70,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Reserved strict mode flag for future compatibility.",
+        help="Fail immediately if any enabled candidate cannot train/evaluate.",
     )
     return parser.parse_args()
 
@@ -191,39 +191,47 @@ def main() -> None:
                 continue
             name = candidate["name"]
             logger.info("Training candidate", extra={"candidate": name, "type": candidate["type"]})
-            model = build_model(candidate)
-            model.fit(x_train, y_train)
+            try:
+                model = build_model(candidate)
+                model.fit(x_train, y_train)
 
-            y_val_proba = model.predict_proba(x_val)[:, 1]
-            y_val_pred = (y_val_proba >= 0.5).astype(int)
+                y_val_proba = model.predict_proba(x_val)[:, 1]
+                y_val_pred = (y_val_proba >= 0.5).astype(int)
 
-            roc_auc = float(roc_auc_score(y_val, y_val_proba))
-            precision = float(precision_score(y_val, y_val_pred, zero_division=0))
-            recall = float(recall_score(y_val, y_val_pred, zero_division=0))
-            f1 = float(f1_score(y_val, y_val_pred, zero_division=0))
+                roc_auc = float(roc_auc_score(y_val, y_val_proba))
+                precision = float(precision_score(y_val, y_val_pred, zero_division=0))
+                recall = float(recall_score(y_val, y_val_pred, zero_division=0))
+                f1 = float(f1_score(y_val, y_val_pred, zero_division=0))
 
-            results.append(
-                {
-                    "name": name,
-                    "type": candidate["type"],
-                    "params": candidate.get("params", {}),
-                    "model": model,
-                    "roc_auc": roc_auc,
-                    "precision": precision,
-                    "recall": recall,
-                    "f1": f1,
-                }
-            )
-            logger.info(
-                "Candidate metrics",
-                extra={
-                    "candidate": name,
-                    "roc_auc": roc_auc,
-                    "precision": precision,
-                    "recall": recall,
-                    "f1": f1,
-                },
-            )
+                results.append(
+                    {
+                        "name": name,
+                        "type": candidate["type"],
+                        "params": candidate.get("params", {}),
+                        "model": model,
+                        "roc_auc": roc_auc,
+                        "precision": precision,
+                        "recall": recall,
+                        "f1": f1,
+                    }
+                )
+                logger.info(
+                    "Candidate metrics",
+                    extra={
+                        "candidate": name,
+                        "roc_auc": roc_auc,
+                        "precision": precision,
+                        "recall": recall,
+                        "f1": f1,
+                    },
+                )
+            except Exception:
+                if args.strict:
+                    raise
+                logger.exception(
+                    "Candidate failed and was skipped (strict disabled).",
+                    extra={"candidate": name, "type": candidate["type"]},
+                )
 
         if not results:
             raise SystemExit("No enabled model candidates found.")
@@ -274,6 +282,8 @@ def main() -> None:
             registry = ModelRegistry(resolve_path(root, cfg.registry.file))
             input_features = _load_feature_names(models_dir)
             feature_importance = _extract_feature_importance(best["model"], input_features)
+            # Registry points to timestamped file (immutable) for true rollback support.
+            # best_model.joblib is kept as local alias for notebooks/tests only.
             registered_model_id = _register_model(
                 registry=registry,
                 model_path=model_path,

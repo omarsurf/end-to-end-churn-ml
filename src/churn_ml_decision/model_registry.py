@@ -59,6 +59,26 @@ class ModelRegistry:
             return {}
         return json.loads(self.path.read_text(encoding="utf-8"))
 
+    def _normalize_document_paths(self, doc: RegistryDocument) -> tuple[RegistryDocument, bool]:
+        changed = False
+        normalized_models: list[ModelMetadata] = []
+        for model in doc.models:
+            normalized_path = self._normalize_model_path(model.model_path)
+            if normalized_path != model.model_path:
+                changed = True
+                payload = model.model_dump(mode="python")
+                payload["model_path"] = normalized_path
+                normalized_models.append(ModelMetadata.model_validate(payload))
+            else:
+                normalized_models.append(model)
+
+        if not changed:
+            return doc, False
+
+        payload = doc.model_dump(mode="python")
+        payload["models"] = normalized_models
+        return RegistryDocument.model_validate(payload), True
+
     def _load(self) -> RegistryDocument:
         raw = self._read_raw()
         if not raw:
@@ -75,7 +95,11 @@ class ModelRegistry:
                 ]
                 if key in raw
             }
-            return RegistryDocument.model_validate(normalized)
+            doc = RegistryDocument.model_validate(normalized)
+            doc, changed = self._normalize_document_paths(doc)
+            if changed:
+                self._save(doc)
+            return doc
 
         # Backward-compatible migration from legacy structure.
         legacy_runs = raw.get("runs", [])
@@ -112,12 +136,16 @@ class ModelRegistry:
             production_id = models[-1].model_id
             models[-1].status = "production"
 
-        return RegistryDocument(
+        doc = RegistryDocument(
             models=models,
             current_production_model_id=production_id,
             previous_production_model_id=None,
             updated_at=now,
         )
+        doc, changed = self._normalize_document_paths(doc)
+        if changed:
+            self._save(doc)
+        return doc
 
     def _serialize(self, doc: RegistryDocument) -> dict[str, Any]:
         payload = doc.model_dump(mode="json")
